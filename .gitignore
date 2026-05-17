@@ -1,0 +1,11 @@
+CLAUDE.local.md
+.env
+node_modules/
+dist/
+.idea/
+*.log
+server/downloads/
+server/*.db
+server/*.db-shm
+server/*.db-wal
+.claude/settings.local.json

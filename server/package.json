@@ -1,0 +1,29 @@
+{
+  "name": "streamvault-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "aniwatch": "^2.27.9",
+    "better-sqlite3": "^11.9.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2",
+    "webtorrent": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.21",
+    "@types/webtorrent": "^0.110.1",
+    "gogoanime-api-new": "^1.0.27",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
