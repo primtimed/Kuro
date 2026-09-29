@@ -1,29 +1,5 @@
 export type MediaType = "anime" | "movie" | "series" | "twitch";
 
-export interface CustomScraper {
-  id: string;
-  name: string;
-  url: string;
-  source: string;
-  audio: ("sub" | "dub")[];
-}
-
-export interface ScraperSettings {
-  sub_order: string[];
-  dub_order: string[];
-  scraper_urls: Record<string, string>;
-  custom_scrapers: CustomScraper[];
-}
-
-export interface ScraperDef {
-  id: string;
-  name: string;
-  defaultUrl: string;
-  note: string;
-  audio: ("sub" | "dub")[];
-  knownDomains: readonly string[];
-}
-
 export interface CastMember {
   name: string;
   role: string;
@@ -88,6 +64,7 @@ export interface StreamResult {
   headers?: Record<string, string>;
   dubbed?: boolean;
   watchUrl?: string; // fallback link to source site when embed couldn't be extracted
+  servers?: { name: string; url: string }[]; // alternative embeds for the same episode
 }
 
 export interface SubtitleTrack {
@@ -122,4 +99,101 @@ export interface LikeEntry {
   poster?: string;
   liked_at: number;
   content_tag?: string;
+}
+
+export interface StreamingSite {
+  rank: number;
+  slug: string;
+  name: string;
+  url: string;
+  isSupported: boolean;
+}
+
+export interface LiveStream {
+  url: string;
+  quality: string | null;
+  referrer: string | null;
+  userAgent: string | null;
+  isGeoBlocked: boolean;
+  isNot247: boolean;
+}
+
+export interface LiveChannelSummary {
+  id: string;
+  name: string;
+  logo: string | null;
+  country: string | null;
+  categories: string[];
+  languages: string[];
+  website: string | null;
+  streamCount: number;
+}
+
+export interface LiveChannel extends Omit<LiveChannelSummary, "streamCount"> {
+  streams: LiveStream[];
+}
+
+export interface LiveFilters {
+  total: number;
+  updatedAt: number;
+  categories: { id: string; name: string; count: number }[];
+  languages: { code: string; name: string; count: number }[];
+  countries: { code: string; name: string; flag: string; count: number }[];
+}
+
+export interface LiveChannelQuery {
+  category?: string;
+  language?: string;
+  country?: string;
+  q?: string;
+  favorites?: "1";
+  offset?: number;
+  limit?: number;
+}
+
+export interface HouseholdProfile {
+  id: string;
+  name: string;
+  color: string;
+  initial: string;
+  isShared: boolean;
+  isOwner: boolean;
+  needsPin: boolean;
+  hasPin: boolean;
+}
+
+export interface Me {
+  owner: { id: string; name: string; isAdmin: boolean };
+  activeProfileId: string;
+  device: { name: string; kind: "browser" | "tv" };
+  profiles: HouseholdProfile[];
+}
+
+export interface SignedInDevice {
+  id: string;
+  name: string;
+  kind: "browser" | "tv";
+  ownerName: string;
+  createdAt: number;
+  lastUsedAt: number;
+  isCurrent: boolean;
+}
+
+export interface FamilyProfile {
+  id: string;
+  name: string;
+  color: string;
+  initial: string;
+  isAdmin: boolean;
+  isShared: boolean;
+  googleEmail: string | null;
+  isLinked: boolean;
+  hasPin: boolean;
+  lastActiveAt: number | null;
+  inviteExpiresAt: number | null;
+}
+
+export interface InviteInfo {
+  kind: "invite" | "setup";
+  profile: { name: string; color: string; initial: string };
 }

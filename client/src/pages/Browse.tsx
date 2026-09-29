@@ -7,6 +7,7 @@ import { Row } from "../components/Row";
 import { api } from "../lib/api";
 import { useMediaMode } from "../context/MediaModeContext";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useBrowseSearch } from "../hooks/useBrowseSearch";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -271,12 +272,16 @@ function CategoryBrowse({ category, genre }: { category?: string; genre?: string
   const [query, setQuery] = useState("");
   const [format, setFormat] = useState("");
   const [audio, setAudio] = useState<Audio>("");
+  // Anime genres page through the server (AniList or the sub/dub catalog); TV genres and
+  // categories are fixed lists filtered client-side.
+  const isPagedGenre = !!genre && mode === "anime";
+  const search = useBrowseSearch({ mode, query, format, audio, genre: genre ?? "", isEnabled: isPagedGenre });
 
   useEffect(() => {
     setLoading(true);
     setAllItems([]);
-    const fetchFn = genre
-      ? () => (mode === "tv" ? api.tv.genre(genre) : api.genre(genre))
+    const fetchFn = isPagedGenre ? undefined
+      : genre ? () => api.tv.genre(genre)
       : config?.fetch;
     if (!fetchFn) return;
     fetchFn()
@@ -317,10 +322,10 @@ function CategoryBrowse({ category, genre }: { category?: string; genre?: string
           onQueryChange={setQuery}
           onFormatChange={setFormat}
           onAudioChange={setAudio}
-          showAudio={false}
+          showAudio={isPagedGenre}
         />
 
-        {!loading && hasFilters && (
+        {!isPagedGenre && !loading && hasFilters && (
           <ActiveFilters
             query={query}
             format={format}
@@ -333,7 +338,9 @@ function CategoryBrowse({ category, genre }: { category?: string; genre?: string
           />
         )}
 
-        {loading ? (
+        {isPagedGenre ? (
+          <PagedResults search={search} />
+        ) : loading ? (
           <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px" }}>
             {Array.from({ length: 20 }).map((_, i) => <CardSkeleton key={i} />)}
           </div>
@@ -348,6 +355,34 @@ function CategoryBrowse({ category, genre }: { category?: string; genre?: string
         )}
       </div>
     </div>
+  );
+}
+
+// ── Paged results (infinite scroll) ─────────────────────────────────────────
+
+function PagedResults({ search }: { search: ReturnType<typeof useBrowseSearch> }) {
+  if (search.isLoading) {
+    return (
+      <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px" }}>
+        {Array.from({ length: 20 }).map((_, i) => <CardSkeleton key={i} />)}
+      </div>
+    );
+  }
+  if (search.results.length === 0) {
+    return search.hasSearched ? (
+      <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
+        No results — try a different search or filter.
+      </p>
+    ) : null;
+  }
+  return (
+    <>
+      <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px" }}>
+        {search.results.map((m) => <Card key={m.id} media={m} />)}
+        {search.isLoadingMore && Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={`more-${i}`} />)}
+      </div>
+      {search.hasMore && <div ref={search.sentinelRef} aria-hidden style={{ height: 1 }} />}
+    </>
   );
 }
 
@@ -372,14 +407,12 @@ function MainBrowse() {
   const [query, setQuery] = useState("");
   const [format, setFormat] = useState("");
   const [audio, setAudio] = useState<Audio>("");
-  const [results, setResults] = useState<Media[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [genre, setGenre] = useState("");
   const [row1, setRow1] = useState<Media[]>([]);
   const [row2, setRow2] = useState<Media[]>([]);
   const [row1Loading, setRow1Loading] = useState(true);
   const [row2Loading, setRow2Loading] = useState(true);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const search = useBrowseSearch({ mode, query, format, audio, genre });
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -387,11 +420,10 @@ function MainBrowse() {
     setRow2([]);
     setRow1Loading(true);
     setRow2Loading(true);
-    setResults([]);
-    setHasSearched(false);
     setQuery("");
     setFormat("");
     setAudio("");
+    setGenre("");
 
     if (mode === "tv") {
       api.tv.trending().then(setRow1).catch(() => {}).finally(() => setRow1Loading(false));
@@ -402,29 +434,6 @@ function MainBrowse() {
     }
   }, [mode]);
 
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const q = query.trim();
-    const effectiveQuery = mode === "anime" && audio === "dub" ? `${q} dub`.trim() : q;
-    if (!effectiveQuery && !format) {
-      setResults([]);
-      setHasSearched(false);
-      return;
-    }
-    debounceRef.current = setTimeout(() => {
-      setSearchLoading(true);
-      const searchFn = mode === "tv"
-        ? () => api.tv.search(effectiveQuery)
-        : () => api.search(effectiveQuery, format || undefined);
-      searchFn()
-        .then((r) => { setResults(r); setHasSearched(true); })
-        .catch(() => setResults([]))
-        .finally(() => setSearchLoading(false));
-    }, 350);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, format, audio, mode]);
-
-  const isSearchMode = !!query.trim() || (mode === "anime" && !!format);
   const browseGenres = mode === "tv" ? TV_BROWSE_GENRES : ANIME_BROWSE_GENRES;
   const row1Label = mode === "tv" ? "Popular Shows" : "Trending Now";
   const row2Label = mode === "tv" ? "On Air Today" : "This Season";
@@ -453,14 +462,19 @@ function MainBrowse() {
 
         {/* Genre chips */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 32 }}>
-          {browseGenres.map((g) => (
+          {browseGenres.map((g) => {
+            const isActive = genre === g;
+            return (
             <button
               key={g}
-              onClick={() => navigate(`/genre/${encodeURIComponent(g)}`)}
+              // Anime genres filter in place so they combine with search, format and sub/dub
+              onClick={() => mode === "tv" ? navigate(`/genre/${encodeURIComponent(g)}`) : setGenre(isActive ? "" : g)}
+              aria-pressed={mode === "anime" ? isActive : undefined}
               style={{
-                padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 500,
-                background: "var(--surf)", color: "var(--muted)",
-                border: "1px solid var(--line-2)", cursor: "pointer",
+                padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: isActive ? 600 : 500,
+                background: isActive ? "var(--accent-soft)" : "var(--surf)",
+                color: isActive ? "var(--text)" : "var(--muted)",
+                border: `1px solid ${isActive ? "var(--accent)" : "var(--line-2)"}`, cursor: "pointer",
                 transition: "border-color 150ms, color 150ms",
               }}
               onMouseEnter={(e) => {
@@ -469,6 +483,7 @@ function MainBrowse() {
                 b.style.color = "var(--text)";
               }}
               onMouseLeave={(e) => {
+                if (isActive) return;
                 const b = e.currentTarget as HTMLButtonElement;
                 b.style.borderColor = "var(--line-2)";
                 b.style.color = "var(--muted)";
@@ -476,25 +491,14 @@ function MainBrowse() {
             >
               {g}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {isSearchMode || hasSearched ? (
+      {search.isActive ? (
         <div style={{ padding: isMobile ? "0 16px" : "0 32px" }}>
-          {searchLoading ? (
-            <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px" }}>
-              {Array.from({ length: 20 }).map((_, i) => <CardSkeleton key={i} />)}
-            </div>
-          ) : results.length > 0 ? (
-            <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px" }}>
-              {results.map((m) => <Card key={m.id} media={m} />)}
-            </div>
-          ) : hasSearched ? (
-            <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
-              No results — try a different search or filter.
-            </p>
-          ) : null}
+          <PagedResults search={search} />
         </div>
       ) : (
         <>

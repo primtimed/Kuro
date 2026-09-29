@@ -76,15 +76,12 @@ router.get("/stream", (req, res) => {
   const encoded = req.query.file as string;
   if (!encoded) return res.status(400).json({ error: "Missing file param" });
 
-  let filePath: string;
-  try {
-    filePath = Buffer.from(encoded, "base64").toString("utf-8");
-  } catch {
-    return res.status(400).json({ error: "Invalid file param" });
-  }
-
-  // Security: must be under MEDIA_DIR if configured
-  if (MEDIA_DIR && !filePath.startsWith(path.resolve(MEDIA_DIR))) {
+  // Only files inside MEDIA_DIR are served. Resolving first defeats "../" escapes, and the
+  // trailing separator stops "/media2" from matching "/media".
+  if (!MEDIA_DIR) return res.status(404).json({ error: "Local media is not configured" });
+  const filePath = path.resolve(Buffer.from(encoded, "base64").toString("utf-8"));
+  const mediaRoot = path.resolve(MEDIA_DIR) + path.sep;
+  if (!filePath.startsWith(mediaRoot)) {
     return res.status(403).json({ error: "Forbidden" });
   }
 

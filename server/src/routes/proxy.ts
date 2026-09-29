@@ -8,10 +8,12 @@ const router = Router();
 // Required because: (1) Referer is a forbidden header in browser XHR/fetch,
 // (2) CDN hosts like uwucdn.top have CORS restrictions on direct browser requests.
 //
-// GET /api/proxy/hls?url=<encoded-url>&ref=<encoded-referer>
+// GET /api/proxy/hls?url=<encoded-url>&ref=<encoded-referer>&ua=<encoded-user-agent>
 router.get("/hls", async (req, res) => {
   const url = decodeURIComponent((req.query.url as string) ?? "");
   const referer = decodeURIComponent((req.query.ref as string) ?? "");
+  // Some live TV hosts only serve players that identify with a specific User-Agent
+  const userAgent = decodeURIComponent((req.query.ua as string) ?? "");
 
   if (!url.startsWith("http")) {
     return res.status(400).json({ error: "invalid url" });
@@ -19,7 +21,7 @@ router.get("/hls", async (req, res) => {
 
   try {
     const headers: Record<string, string> = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "User-Agent": userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     };
     if (referer) headers["Referer"] = referer;
 
@@ -41,8 +43,12 @@ router.get("/hls", async (req, res) => {
     if (isM3u8) {
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
       const text = await upstream.text();
-      const base = new URL(url);
-      const refParam = referer ? `&ref=${encodeURIComponent(referer)}` : "";
+      // Relative segment paths resolve against where the playlist actually came from —
+      // live TV hosts often redirect to a regional edge server.
+      const base = new URL(upstream.url || url);
+      const refParam =
+        (referer ? `&ref=${encodeURIComponent(referer)}` : "") +
+        (userAgent ? `&ua=${encodeURIComponent(userAgent)}` : "");
 
       const rewritten = text
         .split("\n")

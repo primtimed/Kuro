@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Search, Home, Compass, BookMarked, ChevronDown, Tags, Settings, Menu, X } from "lucide-react";
+import { Search, Home, Compass, BookMarked, ChevronDown, Tags, Settings, Menu, X, Tv, Lock, LogOut } from "lucide-react";
 import { useAccount } from "../context/AccountContext";
 import { useMediaMode } from "../context/MediaModeContext";
-import { ACCOUNTS, GUEST_ACCOUNT } from "../lib/accounts";
 import { api } from "../lib/api";
 import type { Media } from "../lib/types";
 import { AnimeCover } from "../lib/procedural";
@@ -50,11 +49,12 @@ export function Navbar() {
   const [modalLoading, setModalLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { account, setAccount } = useAccount();
+  const { account, profiles, requestProfile, signOut } = useAccount();
   const switchRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const genreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestSearchRef = useRef(0);
 
   function clearSearch() {
     setQuery("");
@@ -139,11 +139,14 @@ export function Navbar() {
     debounceRef.current = setTimeout(() => {
       setModalLoading(true);
       setModalOpen(true);
-      const searchFn = mode === "tv" ? api.tv.search : api.search;
+      // Responses can arrive out of order while typing; only the newest one may update the dropdown.
+      const requestId = ++latestSearchRef.current;
+      const isLatest = () => requestId === latestSearchRef.current;
+      const searchFn = mode === "tv" ? api.tv.search : (q: string) => api.search(q, 1).then((r) => r.items);
       searchFn(value.trim())
-        .then((r) => setModalResults(r))
-        .catch(() => setModalResults([]))
-        .finally(() => setModalLoading(false));
+        .then((r) => { if (isLatest()) setModalResults(r); })
+        .catch(() => { if (isLatest()) setModalResults([]); })
+        .finally(() => { if (isLatest()) setModalLoading(false); });
     }, 400);
   }
 
@@ -297,12 +300,13 @@ export function Navbar() {
 
               {/* Nav links */}
               <nav style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 24 }}>
-                {([
+                {[
                   { label: "Home", icon: <Home size={16} />, to: "/" },
                   { label: "Browse", icon: <Compass size={16} />, to: "/browse" },
+                  ...(mode === "tv" ? [{ label: "Live TV", icon: <Tv size={16} />, to: "/live" }] : []),
                   { label: "Library", icon: <BookMarked size={16} />, to: "/library" },
                   { label: "Settings", icon: <Settings size={16} />, to: "/settings" },
-                ] as const).map(({ label, icon, to }) => (
+                ].map(({ label, icon, to }) => (
                   <button
                     key={to}
                     onClick={() => { navigate(to); setMobileOpen(false); }}
@@ -344,10 +348,10 @@ export function Navbar() {
               {/* Account switcher */}
               <div>
                 <p className="mono" style={{ margin: "0 0 10px", fontSize: 10, color: "var(--dim)", letterSpacing: 1.5 }}>ACCOUNT</p>
-                {[...ACCOUNTS, GUEST_ACCOUNT].map((a) => (
+                {profiles.map((a) => (
                   <button
                     key={a.id}
-                    onClick={() => { setAccount(a); window.location.href = "/"; }}
+                    onClick={() => { setMobileOpen(false); requestProfile(a); }}
                     style={{
                       display: "flex", alignItems: "center", gap: 12,
                       width: "100%", padding: "11px 0", fontSize: 14,
@@ -365,11 +369,21 @@ export function Navbar() {
                       {a.initial}
                     </div>
                     {a.name}
+                    {a.needsPin && <Lock size={12} aria-label="PIN protected" style={{ color: "var(--dim)" }} />}
                     {a.id === account?.id && (
                       <span style={{ marginLeft: "auto", fontSize: 12, color: a.color }}>✓</span>
                     )}
                   </button>
                 ))}
+                <button
+                  onClick={() => void signOut()}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "14px 0",
+                    fontSize: 14, background: "transparent", color: "var(--muted)",
+                  }}
+                >
+                  <LogOut size={16} aria-hidden="true" /> Sign out
+                </button>
               </div>
             </div>
           </div>
@@ -434,6 +448,9 @@ export function Navbar() {
           <nav style={{ display: "flex", gap: 4 }}>
             <NavBtn icon={<Home size={13} />} label="Home" active={path === "/"} onClick={() => navigate("/")} />
             <NavBtn icon={<Compass size={13} />} label="Browse" active={path === "/browse" || path.startsWith("/browse/")} onClick={() => navigate("/browse")} />
+            {mode === "tv" && (
+              <NavBtn icon={<Tv size={13} />} label="Live TV" active={path === "/live"} onClick={() => navigate("/live")} />
+            )}
             <NavBtn icon={<BookMarked size={13} />} label="Library" active={path === "/library"} onClick={() => navigate("/library")} />
 
             <div ref={genreRef} style={{ position: "relative" }}>
@@ -647,15 +664,25 @@ export function Navbar() {
               borderRadius: 8, overflow: "hidden", minWidth: 160,
               boxShadow: "0 8px 32px rgba(0,0,0,0.6)", zIndex: 100,
             }}>
-              {ACCOUNTS.map((a) => (
+              <button
+                onClick={() => { setSwitchOpen(false); navigate("/profiles"); }}
+                className="mono"
+                style={{
+                  width: "100%", padding: "10px 12px", fontSize: 10, letterSpacing: 1, textAlign: "left",
+                  background: "transparent", color: "var(--dim)", borderBottom: "1px solid var(--line)",
+                }}
+              >
+                WHO'S WATCHING?
+              </button>
+              {profiles.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => { setAccount(a); window.location.href = "/"; }}
+                  onClick={() => { setSwitchOpen(false); requestProfile(a); }}
                   style={{
                     display: "flex", alignItems: "center", gap: 10,
                     width: "100%", padding: "10px 12px", fontSize: 13,
                     background: a.id === account?.id ? "var(--surf-3)" : "transparent",
-                    color: a.id === account?.id ? "#fff" : "var(--muted)",
+                    color: a.id === account?.id ? "var(--text)" : "var(--muted)",
                     borderBottom: "1px solid var(--line)",
                   }}
                 >
@@ -663,37 +690,26 @@ export function Navbar() {
                     width: 22, height: 22, borderRadius: 4, flexShrink: 0,
                     background: `linear-gradient(135deg, ${a.color}, ${a.color}88)`,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 9, fontWeight: 800, color: "#fff",
+                    fontSize: 9, fontWeight: 800, color: "var(--text)",
                   }}>
                     {a.initial}
                   </div>
                   {a.name}
+                  {a.needsPin && <Lock size={11} aria-label="PIN protected" style={{ color: "var(--dim)" }} />}
                   {a.id === account?.id && (
                     <span style={{ marginLeft: "auto", fontSize: 10, color: a.color }}>✓</span>
                   )}
                 </button>
               ))}
               <button
-                onClick={() => { setAccount(GUEST_ACCOUNT); window.location.href = "/"; }}
+                onClick={() => void signOut()}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
                   width: "100%", padding: "10px 12px", fontSize: 13,
-                  background: account?.isGuest ? "var(--surf-3)" : "transparent",
-                  color: account?.isGuest ? "#fff" : "var(--muted)",
+                  background: "transparent", color: "var(--muted)",
                 }}
               >
-                <div style={{
-                  width: 22, height: 22, borderRadius: 4, flexShrink: 0,
-                  background: `linear-gradient(135deg, ${GUEST_ACCOUNT.color}, ${GUEST_ACCOUNT.color}88)`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 9, fontWeight: 800, color: "#fff",
-                }}>
-                  {GUEST_ACCOUNT.initial}
-                </div>
-                {GUEST_ACCOUNT.name}
-                {account?.isGuest && (
-                  <span style={{ marginLeft: "auto", fontSize: 10, color: GUEST_ACCOUNT.color }}>✓</span>
-                )}
+                <LogOut size={14} aria-hidden="true" /> Sign out
               </button>
             </div>
           )}

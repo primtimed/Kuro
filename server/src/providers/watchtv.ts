@@ -7,15 +7,29 @@ const BASE = "https://www.watchtv.click";
 // TVMaze show types treated as movies (single playable page instead of episode URLs)
 const MOVIE_TYPES = new Set(["Documentary"]);
 
+// watchtv.click disappears for long stretches. While it's unreachable, fail instantly: each
+// attempt costs seconds of DNS/connect timeout and ties up threads other lookups need.
+const SITE_DOWN_BACKOFF_MS = 10 * 60 * 1000;
+let siteDownUntil = 0;
+
 async function fetchPage(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Accept: "text/html,*/*",
-      Referer: BASE,
-    },
-    signal: AbortSignal.timeout(12000),
-  });
+  if (Date.now() < siteDownUntil) throw new Error("watchtv.click is unreachable, retrying later");
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,*/*",
+        Referer: BASE,
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (err) {
+    siteDownUntil = Date.now() + SITE_DOWN_BACKOFF_MS;
+    console.error(`[watchtv] unreachable, pausing requests for ${SITE_DOWN_BACKOFF_MS / 60_000} min:`, (err as Error).message);
+    throw err;
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
@@ -127,9 +141,12 @@ let _catalog: WatchtvCatalogItem[] = [];
 let _catalogAt = 0;
 let _catalogInFlight: Promise<WatchtvCatalogItem[]> | null = null;
 const CATALOG_TTL = 6 * 60 * 60 * 1000;
+// A failed scrape takes ~75s when watchtv.click is down — don't repeat it on every search.
+const EMPTY_CATALOG_RETRY_MS = 10 * 60 * 1000;
 
 export async function scrapeCatalog(seriesPages = 15, moviePages = 10): Promise<WatchtvCatalogItem[]> {
-  if (Date.now() - _catalogAt < CATALOG_TTL && _catalog.length > 0) return _catalog;
+  const ttl = _catalog.length > 0 ? CATALOG_TTL : EMPTY_CATALOG_RETRY_MS;
+  if (_catalogAt > 0 && Date.now() - _catalogAt < ttl) return _catalog;
   // Deduplicate: if a scrape is already in-flight, wait for it instead of launching another.
   if (_catalogInFlight) return _catalogInFlight;
 

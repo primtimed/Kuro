@@ -1,7 +1,10 @@
 import { Router } from "express";
+import { cached } from "../cache/index.js";
 import db from "../db/client.js";
-import { deleteTorrentFile } from "../lib/torrent.js";
+import { activeProfileId, ignoreGuestWrites } from "../lib/auth.js";
 import anilist from "../providers/anilist.js";
+import { getLatestEpisode } from "../providers/anikototv.js";
+import { getMediaDetail } from "../providers/index.js";
 import type { Media } from "../types/media.js";
 
 const al = anilist as typeof anilist & {
@@ -10,11 +13,8 @@ const al = anilist as typeof anilist & {
 };
 
 const router = Router();
+router.use(ignoreGuestWrites);
 
-function accountId(req: import("express").Request): string {
-  const id = req.headers["x-account-id"];
-  return typeof id === "string" && id ? id : "1";
-}
 
 function contentTag(mediaId: string): "tv" | "anime" {
   return mediaId.startsWith("tvmaze:") || mediaId.startsWith("watchtv:") ? "tv" : "anime";
@@ -23,7 +23,7 @@ function contentTag(mediaId: string): "tv" | "anime" {
 // --- Favorites ---
 
 router.get("/favorites", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db
     .prepare("SELECT * FROM favorites WHERE account_id = ? ORDER BY added_at DESC")
     .all(aid);
@@ -31,7 +31,7 @@ router.get("/favorites", (req, res) => {
 });
 
 router.post("/favorites", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const { media_id, type, title, poster } = req.body as {
     media_id: string;
     type: string;
@@ -51,13 +51,13 @@ router.post("/favorites", (req, res) => {
 });
 
 router.delete("/favorites/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM favorites WHERE media_id = ? AND account_id = ?").run(req.params.mediaId, aid);
   res.json({ ok: true });
 });
 
 router.get("/favorites/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const row = db
     .prepare("SELECT * FROM favorites WHERE media_id = ? AND account_id = ?")
     .get(req.params.mediaId, aid);
@@ -67,7 +67,7 @@ router.get("/favorites/:mediaId", (req, res) => {
 // --- History / Progress ---
 
 router.get("/history", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db
     .prepare("SELECT * FROM history WHERE account_id = ? ORDER BY last_watched DESC LIMIT 50")
     .all(aid);
@@ -75,7 +75,7 @@ router.get("/history", (req, res) => {
 });
 
 router.post("/progress", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const { media_id, episode_number = 0, progress_seconds, duration_seconds, is_dub } = req.body as {
     media_id: string;
     episode_number?: number;
@@ -99,15 +99,11 @@ router.post("/progress", (req, res) => {
        content_tag = excluded.content_tag`
   ).run(media_id, aid, episode_number, progress_seconds, duration_seconds ?? null, Date.now(), is_dub ? 1 : 0, contentTag(media_id));
 
-  if (duration_seconds && progress_seconds / duration_seconds >= 0.95) {
-    deleteTorrentFile(`${media_id}:${episode_number}`);
-  }
-
   return res.json({ ok: true });
 });
 
 router.get("/progress/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db
     .prepare("SELECT * FROM history WHERE media_id = ? AND account_id = ?")
     .all(req.params.mediaId, aid);
@@ -115,7 +111,7 @@ router.get("/progress/:mediaId", (req, res) => {
 });
 
 router.delete("/history/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM history WHERE media_id = ? AND account_id = ?")
     .run(req.params.mediaId, aid);
   res.json({ ok: true });
@@ -124,13 +120,13 @@ router.delete("/history/:mediaId", (req, res) => {
 // --- Likes ---
 
 router.get("/likes", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db.prepare("SELECT * FROM likes WHERE account_id = ? ORDER BY liked_at DESC").all(aid);
   res.json(rows);
 });
 
 router.get("/likes/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const row = db
     .prepare("SELECT * FROM likes WHERE media_id = ? AND account_id = ?")
     .get(req.params.mediaId, aid) as { rating: number } | undefined;
@@ -138,7 +134,7 @@ router.get("/likes/:mediaId", (req, res) => {
 });
 
 router.post("/likes", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const { media_id, rating, title, poster } = req.body as {
     media_id: string;
     rating: number;
@@ -158,7 +154,7 @@ router.post("/likes", (req, res) => {
 });
 
 router.delete("/likes/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM likes WHERE media_id = ? AND account_id = ?").run(req.params.mediaId, aid);
   res.json({ ok: true });
 });
@@ -168,19 +164,19 @@ router.delete("/likes/:mediaId", (req, res) => {
 const MAX_FAV_SERIES = 10;
 
 router.get("/favorite-series", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db.prepare("SELECT * FROM favorite_series WHERE account_id = ? ORDER BY added_at DESC").all(aid);
   res.json(rows);
 });
 
 router.get("/favorite-series/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const row = db.prepare("SELECT * FROM favorite_series WHERE media_id = ? AND account_id = ?").get(req.params.mediaId, aid);
   res.json({ isFavSeries: !!row });
 });
 
 router.post("/favorite-series", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const { media_id, title, poster } = req.body as { media_id: string; title: string; poster?: string };
   if (!media_id || !title) return res.status(400).json({ error: "media_id and title required" });
   const count = (db.prepare("SELECT COUNT(*) FROM favorite_series WHERE account_id = ?").pluck().get(aid) as number);
@@ -191,7 +187,7 @@ router.post("/favorite-series", (req, res) => {
 });
 
 router.delete("/favorite-series/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM favorite_series WHERE media_id = ? AND account_id = ?").run(req.params.mediaId, aid);
   res.json({ ok: true });
 });
@@ -199,19 +195,19 @@ router.delete("/favorite-series/:mediaId", (req, res) => {
 // --- Manually Watched Shows ---
 
 router.get("/manually-watched", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const rows = db.prepare("SELECT * FROM watched_shows WHERE account_id = ? ORDER BY marked_at DESC").all(aid);
   res.json(rows);
 });
 
 router.get("/manually-watched/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const row = db.prepare("SELECT * FROM watched_shows WHERE media_id = ? AND account_id = ?").get(req.params.mediaId, aid);
   res.json({ watched: !!row });
 });
 
 router.post("/manually-watched", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const { media_id, title, poster } = req.body as { media_id: string; title: string; poster?: string };
   if (!media_id || !title) return res.status(400).json({ error: "media_id and title required" });
   db.prepare("INSERT OR REPLACE INTO watched_shows (media_id, account_id, title, poster, marked_at, content_tag) VALUES (?, ?, ?, ?, ?, ?)")
@@ -220,7 +216,7 @@ router.post("/manually-watched", (req, res) => {
 });
 
 router.delete("/manually-watched/:mediaId", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM watched_shows WHERE media_id = ? AND account_id = ?").run(req.params.mediaId, aid);
   res.json({ ok: true });
 });
@@ -230,7 +226,7 @@ router.delete("/manually-watched/:mediaId", (req, res) => {
 // grouped so the client can apply the 80%-of-episodes threshold.
 
 router.get("/watched-shows", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   const fromHistory = db.prepare(`
     SELECT media_id, COUNT(*) AS watched_count, MAX(last_watched) AS last_watched, MAX(content_tag) AS content_tag
     FROM history
@@ -251,10 +247,59 @@ router.get("/watched-shows", (req, res) => {
   res.json(merged);
 });
 
+// --- New Episodes ---
+// Anime from recent history where anikototv already has an episode past the last one watched.
+
+const NEW_EPISODES_TTL_MS = 30 * 60 * 1000;
+const NEW_EPISODES_MAX_SHOWS = 20;
+const NEW_EPISODES_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+
+type HistoryShow = { media_id: string; last_episode: number };
+
+router.get("/new-episodes", async (req, res) => {
+  const aid = activeProfileId(req);
+  const shows = db.prepare(`
+    SELECT media_id, MAX(episode_number) AS last_episode
+    FROM history
+    WHERE account_id = ? AND content_tag = 'anime' AND last_watched > ?
+    GROUP BY media_id
+    ORDER BY MAX(last_watched) DESC
+    LIMIT ?
+  `).all(aid, Date.now() - NEW_EPISODES_WINDOW_MS, NEW_EPISODES_MAX_SHOWS) as HistoryShow[];
+  if (shows.length === 0) return res.json([]);
+
+  try {
+    // Keyed on watch progress, so watching an episode immediately gives a fresh answer
+    const key = `new-episodes:${shows.map((s) => `${s.media_id}@${s.last_episode}`).join(",")}`;
+    return res.json(await cached(key, NEW_EPISODES_TTL_MS, () => findNewEpisodes(shows)));
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+async function findNewEpisodes(shows: HistoryShow[]): Promise<(Media & { latestEpisode: number; nextEpisode: number })[]> {
+  const results = await Promise.all(shows.map(async (show) => {
+    try {
+      const media = await getMediaDetail(show.media_id);
+      const titles = [media.title, ...(media.altTitles ?? [])].filter(Boolean) as string[];
+      const available = await getLatestEpisode(titles);
+      if (!available) return null;
+      const latest = media.totalEpisodes ? Math.min(available, media.totalEpisodes) : available;
+      return latest > show.last_episode ? { ...media, latestEpisode: latest, nextEpisode: show.last_episode + 1 } : null;
+    } catch (err) {
+      console.error(`[library/new-episodes] checking ${show.media_id} failed:`, err);
+      return null;
+    }
+  }));
+  return results.filter((m): m is NonNullable<typeof m> => m !== null);
+}
+
 // --- New Seasons ---
 
+const NEW_SEASONS_TTL_MS = 60 * 60 * 1000;
+
 router.get("/new-seasons", async (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
 
   const historyRows = db
     .prepare(
@@ -286,10 +331,13 @@ router.get("/new-seasons", async (req, res) => {
 
   if (anilistIds.length === 0) return res.json([]);
 
-  const now = Date.now();
   const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-  // fromMs/toMs only used for NOT_YET_RELEASED; RELEASING anime are always included
-  const sequels = await al.batchGetSequels(anilistIds, now, now + ONE_MONTH_MS).catch(() => [] as Media[]);
+  // The key includes the source ids, so adding a show to the library naturally skips the old entry.
+  const sequels = await cached(`new-seasons:${anilistIds.join(",")}`, NEW_SEASONS_TTL_MS, () => {
+    const now = Date.now();
+    // fromMs/toMs only used for NOT_YET_RELEASED; RELEASING anime are always included
+    return al.batchGetSequels(anilistIds, now, now + ONE_MONTH_MS);
+  }).catch(() => [] as Media[]);
   const filtered = sequels.filter((m) => !watchedIds.has(m.id));
 
   return res.json(filtered);
@@ -325,13 +373,13 @@ function buildExcludedSet(aid: string): Set<string> {
 
 // Clear recommendation cache so next request recalculates
 router.delete("/recommendations", (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
   db.prepare("DELETE FROM recommendation_meta WHERE account_id = ?").run(aid);
   res.json({ ok: true });
 });
 
 router.get("/recommendations", async (req, res) => {
-  const aid = accountId(req);
+  const aid = activeProfileId(req);
 
   // Return cached recommendations if still fresh (< 24h), filtered against current exclusions
   const meta = db

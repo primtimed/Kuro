@@ -1,8 +1,7 @@
 import { Router } from "express";
-import { getProvider } from "../providers/index.js";
+import { getMediaDetail } from "../providers/index.js";
 import { streamViaAnikoto } from "../providers/anikototv.js";
-import { cache, TTL } from "../cache/index.js";
-import type { Media } from "../types/media.js";
+import { cached, TTL } from "../cache/index.js";
 
 const router = Router();
 
@@ -12,32 +11,17 @@ router.get("/:id/stream", async (req, res) => {
   const wantDub = req.query.dub === "1" || req.query.dub === "true";
 
   try {
-    const cacheKey = wantDub
-      ? `stream-src:${id}:${episode}:dub`
-      : `stream-src:${id}:${episode}:sub`;
-
-    // Embed URLs are stable — serve from cache
-    const cached = cache.get<string>(cacheKey);
-    if (cached) return res.json({ url: cached, type: "embed", subtitles: [], dubbed: wantDub });
-
-    // Fetch media titles
-    const detailKey = `detail:${id}`;
-    let media = cache.get<Media>(detailKey);
-    if (!media) {
-      const { provider, externalId } = getProvider(id);
-      media = await provider.getDetail(externalId);
-      cache.set(detailKey, media, TTL.DETAIL);
-    }
-
-    const titles = [media.title, ...(media.altTitles ?? [])].filter(Boolean) as string[];
-
-    const stream = await streamViaAnikoto(titles, episode, wantDub);
-
-    // Only cache when we have an actual embed URL (not a fallback watchUrl)
-    if (stream.type === "embed" && !stream.watchUrl) {
-      cache.set(cacheKey, stream.url, TTL.EPISODES);
-    }
-
+    const stream = await cached(
+      `stream:${id}:${episode}:${wantDub ? "dub" : "sub"}`,
+      TTL.EPISODES,
+      async () => {
+        const media = await getMediaDetail(id);
+        const titles = [media.title, ...(media.altTitles ?? [])].filter(Boolean) as string[];
+        return streamViaAnikoto(titles, episode, wantDub);
+      },
+      // The watch-page link is a last-resort fallback; retry for a real embed next time
+      (s) => s.type === "embed" && !s.watchUrl
+    );
     return res.json(stream);
   } catch (err) {
     return res.status(502).json({ error: String(err) });

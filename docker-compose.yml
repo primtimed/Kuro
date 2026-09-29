@@ -1,0 +1,37 @@
+name: kuro
+
+services:
+  web:
+    build: ./client
+    ports:
+      - "7000:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    environment:
+      PORT: 3002
+      CLIENT_URL: http://localhost:7000
+      FLARESOLVERR_URL: http://flaresolverr:8191
+      CONSUMET_BASE_URL: ${CONSUMET_BASE_URL:-https://api.consumet.org}
+      # Google sign-in: put GOOGLE_CLIENT_ID=... in a .env file next to this file
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      # Address printed in the admin setup link
+      PUBLIC_URL: ${PUBLIC_URL:-https://kuro.brianolt.me}
+    volumes:
+      - kuro-data:/data
+    depends_on:
+      - flaresolverr
+    restart: unless-stopped
+
+  # Solves Cloudflare challenges for the AnikotoTV and AnimePahe scrapers
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      LOG_LEVEL: info
+    restart: unless-stopped
+
+volumes:
+  kuro-data:

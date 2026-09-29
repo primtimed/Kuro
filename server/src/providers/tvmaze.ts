@@ -1,12 +1,50 @@
 import type { Media, Episode, StreamResult, Provider, CastMember } from "../types/media.js";
-import { cache } from "../cache/index.js";
+import { cache, cached } from "../cache/index.js";
 
 const BASE = "https://api.tvmaze.com";
 
+// TVMaze allows 20 requests per 10 s per IP and answers bursts with 429. Pages like TV Home
+// fire ~20 lookups at once, so requests are queued a few at a time and 429s are retried.
+const MAX_CONCURRENT = 4;
+const MAX_ATTEMPTS = 3;
+const ATTEMPT_TIMEOUT_MS = 8_000;
+let active = 0;
+const queue: (() => void)[] = [];
+
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    signal: AbortSignal.timeout(10000),
-  });
+  if (active >= MAX_CONCURRENT) await new Promise<void>((resolve) => queue.push(resolve));
+  active++;
+  try {
+    return await fetchWithRetry<T>(path);
+  } finally {
+    active--;
+    queue.shift()?.();
+  }
+}
+
+// The /shows pages feed trending and every genre list; sharing them avoids refetching
+// the same three pages for each genre on TV Home.
+const SHOWS_PAGE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function getShowsPage(page: number): Promise<TVMazeShow[]> {
+  return cached(`tvmaze-shows:${page}`, SHOWS_PAGE_TTL_MS, () => apiFetch<TVMazeShow[]>(`/shows?page=${page}`));
+}
+
+async function fetchWithRetry<T>(path: string, attempt = 1): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS) });
+  } catch (err) {
+    if (attempt >= MAX_ATTEMPTS) throw new Error(`TVMaze ${path} unreachable: ${(err as Error).message}`);
+    await new Promise((r) => setTimeout(r, 500 * attempt));
+    return fetchWithRetry<T>(path, attempt + 1);
+  }
+
+  if (res.status === 429 && attempt < MAX_ATTEMPTS) {
+    const retryAfterSec = parseInt(res.headers.get("Retry-After") ?? "", 10);
+    await new Promise((r) => setTimeout(r, Number.isFinite(retryAfterSec) ? retryAfterSec * 1000 : 2000));
+    return fetchWithRetry<T>(path, attempt + 1);
+  }
   if (!res.ok) throw new Error(`TVMaze ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -169,7 +207,7 @@ const tvmaze: Provider & {
     const key = "tvmaze-trending";
     const hit = cache.get<Media[]>(key);
     if (hit) return hit;
-    const data = await apiFetch<TVMazeShow[]>(`/shows?page=0`);
+    const data = await getShowsPage(0);
     const sorted = [...data].sort((a, b) => b.weight - a.weight).slice(0, 25);
     const result = sorted.map(mapShow);
     cache.set(key, result, 60 * 60 * 1000);
@@ -182,9 +220,9 @@ const tvmaze: Provider & {
     if (hit) return hit;
 
     const pages = await Promise.allSettled([
-      apiFetch<TVMazeShow[]>(`/shows?page=0`),
-      apiFetch<TVMazeShow[]>(`/shows?page=1`),
-      apiFetch<TVMazeShow[]>(`/shows?page=2`),
+      getShowsPage(0),
+      getShowsPage(1),
+      getShowsPage(2),
     ]);
 
     const all: TVMazeShow[] = pages.flatMap((p) =>

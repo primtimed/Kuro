@@ -92,7 +92,7 @@ export function Watch() {
         if (cancelled) return;
         setCachedStream(decodedId, episodeNum, isDub, s);
         setStream(s);
-        setDubFallback(!isTVSeries && s.type !== "embed" && isDub && s.dubbed === false);
+        setDubFallback(!isTVSeries && isDub && s.dubbed === false);
         setHistory(h);
         const saved = h.find((entry) => entry.episode_number === episodeNum);
         if (saved && saved.duration_seconds && saved.progress_seconds / saved.duration_seconds < 0.90) {

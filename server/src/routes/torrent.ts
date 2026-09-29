@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { getProvider } from "../providers/index.js";
-import { cache, TTL } from "../cache/index.js";
+import { getMediaDetail } from "../providers/index.js";
+import { cache } from "../cache/index.js";
 import type { Media } from "../types/media.js";
-import { findTorrent, addTorrent, streamTorrentFile, getTorrentProgress, searchNyaa } from "../lib/torrent.js";
+import { searchNyaa } from "../lib/torrent.js";
 import { hasDubOnGogoanime } from "../providers/consumet.js";
 
 async function checkDubAvailable(media: Media): Promise<boolean> {
@@ -26,67 +26,6 @@ async function checkDubAvailable(media: Media): Promise<boolean> {
 
 const router = Router();
 
-// GET /api/torrent/find?mediaId=<id>&episode=<n>&season=<s>&dub=<0|1>
-// Finds a torrent on nyaa.si, adds it to WebTorrent, returns the stream URL.
-router.get("/find", async (req, res) => {
-  const mediaId = decodeURIComponent((req.query.mediaId as string) ?? "");
-  const episode = parseInt((req.query.episode as string) ?? "1", 10);
-  const season = parseInt((req.query.season as string) ?? "1", 10);
-  const wantDub = req.query.dub === "1";
-
-  if (!mediaId) return res.status(400).json({ error: "mediaId required" });
-
-  const key = `${mediaId}:${episode}`;
-
-  try {
-    // Get media titles from cache or provider
-    const detailKey = `detail:${mediaId}`;
-    let media = cache.get<Media>(detailKey);
-    if (!media) {
-      const { provider, externalId } = getProvider(mediaId);
-      media = await provider.getDetail(externalId);
-      cache.set(detailKey, media, TTL.DETAIL);
-    }
-
-    const titles = [media.title, ...(media.altTitles ?? [])].filter(Boolean) as string[];
-    const result = await findTorrent(titles, episode, season, wantDub);
-
-    // Add to WebTorrent (non-blocking metadata fetch)
-    const info = await addTorrent(key, result.magnet);
-
-    return res.json({
-      streamUrl: `/api/torrent/stream?key=${encodeURIComponent(key)}`,
-      title: result.title,
-      fileName: info.fileName,
-      fileSize: info.fileSize,
-      dubbed: wantDub,
-    });
-  } catch (err) {
-    return res.status(502).json({ error: String(err) });
-  }
-});
-
-// GET /api/torrent/stream?key=<mediaId:episode>
-// Streams the torrent video file with range request support.
-router.get("/stream", (req, res) => {
-  const key = decodeURIComponent((req.query.key as string) ?? "");
-  if (!key) return res.status(400).json({ error: "key required" });
-
-  const served = streamTorrentFile(key, req, res);
-  if (!served) {
-    return res.status(404).json({ error: "Torrent not found — call /find first" });
-  }
-});
-
-// GET /api/torrent/progress?key=<mediaId:episode>
-// Returns download progress 0–100.
-router.get("/progress", (req, res) => {
-  const key = decodeURIComponent((req.query.key as string) ?? "");
-  const pct = getTorrentProgress(key);
-  if (pct === null) return res.status(404).json({ error: "not found" });
-  return res.json({ progress: pct });
-});
-
 // GET /api/torrent/dub-available?mediaId=<id>
 // Checks nyaa.si for dub releases. Cached 6h. Used by client to show/hide the DUB toggle.
 router.get("/dub-available", async (req, res) => {
@@ -98,13 +37,7 @@ router.get("/dub-available", async (req, res) => {
   if (cached !== null) return res.json({ dubAvailable: cached });
 
   try {
-    const detailKey = `detail:${mediaId}`;
-    let media = cache.get<Media>(detailKey);
-    if (!media) {
-      const { provider, externalId } = getProvider(mediaId);
-      media = await provider.getDetail(externalId);
-      cache.set(detailKey, media, TTL.DETAIL);
-    }
+    const media = await getMediaDetail(mediaId);
 
     const dubAvailable = await checkDubAvailable(media);
 
@@ -129,13 +62,7 @@ router.get("/dub-available-batch", async (req, res) => {
       const hit = cache.get<boolean>(cacheKey);
       if (hit !== null) return { mediaId, dubAvailable: hit };
 
-      const detailKey = `detail:${mediaId}`;
-      let media = cache.get<Media>(detailKey);
-      if (!media) {
-        const { provider, externalId } = getProvider(mediaId);
-        media = await provider.getDetail(externalId);
-        cache.set(detailKey, media, TTL.DETAIL);
-      }
+      const media = await getMediaDetail(mediaId);
 
       const dubAvailable = await checkDubAvailable(media);
       cache.set(cacheKey, dubAvailable, 6 * 60 * 60 * 1000);

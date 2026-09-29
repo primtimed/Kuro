@@ -32,6 +32,8 @@ Open **http://localhost:5173** (API server runs on :3002)
 | `CLIENT_URL`          | `http://localhost:5173`      | CORS allowed origin                                |
 | `NETWORK_URL`         | —                            | Additional CORS origin (e.g. LAN address)          |
 | `CONSUMET_BASE_URL`   | `https://api.consumet.org`   | Consumet API base (self-host recommended)          |
+| `GOOGLE_CLIENT_ID`    | —                            | OAuth client ID for "Sign in with Google" (required) |
+| `PUBLIC_URL`          | `http://localhost:7000`      | Address used in the admin setup link               |
 
 > **Note:** The public `api.consumet.org` instance is often unreliable. For reliable stream playback, run a local [Consumet API](https://github.com/consumet/consumet.ts) instance and point `CONSUMET_BASE_URL` at it.
 
@@ -73,19 +75,33 @@ Anime/
     └── main.tsx
 ```
 
+## Sign-in
+
+Kuro is for one household. Everyone signs in with Google; nobody has a Kuro password.
+
+- **Admin setup:** on first start the server log prints a one-time setup link. Open it and sign in with Google to become admin (linked to the Brian profile).
+- **Family members:** the admin creates an invite link per profile in *Settings → Family*. It works once and expires after 7 days.
+- **Profile PINs (optional):** asked when opening someone else's profile; forgotten PINs are replaced in *Settings → Your account*.
+- **TVs:** the TV shows a code; anyone signed in approves it at `/pair` on their phone.
+- **Locked out?** `docker compose exec server node dist/scripts/admin-setup.js` prints a new setup link.
+
+Sessions last 90 days and renew while in use. *Guest* is a profile on signed-in devices that saves nothing.
+
 ## Scrapers / Providers
 
-Configured at runtime via `/api/services`. The scraper catalog includes:
+Episodes stream from **AnikotoTV** (sub + dub) as an embedded megaplay.buzz player.
+Its current domain, and AnimePahe's, is read daily from the ranked directory at
+[everythingmoe.com/simple](https://everythingmoe.com/simple), shown under Settings → Streaming sites.
 
-| ID          | Name        | Audio         | Notes                     |
-|-------------|-------------|---------------|---------------------------|
-| `animepahe` | AnimePahe   | Sub           | Fast HLS                  |
-| `gogoanime` | Gogoanime   | Sub + Dub     | Via Consumet              |
-| `zoro`      | Zoro        | Sub + Dub     | —                         |
-| `anilist`   | AniList     | —             | Metadata + art            |
-| `jikan`     | Jikan       | —             | MAL metadata              |
-| `tvmaze`    | TVMaze      | —             | Live TV / series metadata |
-| `watchtv`   | WatchTV     | —             | Live TV streaming         |
+| ID          | Name        | Used for                                  |
+|-------------|-------------|-------------------------------------------|
+| `anikoto`   | AnikotoTV   | Streams, sub/dub availability, new episodes |
+| `animepahe` | AnimePahe   | Sub availability fallback                 |
+| `anilist`   | AniList     | Metadata + art                            |
+| `jikan`     | Jikan       | MAL metadata                              |
+| `tvmaze`    | TVMaze      | TV series metadata                        |
+| `iptv-org`  | iptv-org    | Live TV channels                          |
+| nyaa.si     | Nyaa        | Dub release detection                     |
 
 ## API Routes
 
@@ -146,20 +162,18 @@ Configured at runtime via `/api/services`. The scraper catalog includes:
 
 ### Torrent
 
-| Method | Path                              | Description                            |
-|--------|-----------------------------------|----------------------------------------|
-| GET    | `/api/torrent/find`               | Find a torrent (nyaa.si)               |
-| GET    | `/api/torrent/batch`              | Batch torrent lookup                   |
-| GET    | `/api/torrent/extract-stream`     | Extract stream URL from active torrent |
+| Method | Path                                  | Description                         |
+|--------|---------------------------------------|-------------------------------------|
+| GET    | `/api/torrent/dub-available`          | Check nyaa.si for dub releases      |
+| GET    | `/api/torrent/dub-available-batch`    | Same, for up to 50 titles           |
 
 ### Services
 
-| Method | Path                              | Description                        |
-|--------|-----------------------------------|------------------------------------|
-| GET    | `/api/services/scrapers`          | List configured scrapers           |
-| GET    | `/api/services/scrapers/test`     | Test scraper connectivity          |
-| GET    | `/api/services/settings`          | Get service settings               |
-| PUT    | `/api/services/settings`          | Update service settings            |
+| Method | Path                              | Description                                   |
+|--------|-----------------------------------|-----------------------------------------------|
+| GET    | `/api/services/directory`         | Ranked streaming sites (everythingmoe.com)    |
+| GET    | `/api/services/extract-stream`    | Extract a stream URL from an episode page     |
+| GET    | `/api/services/launch`            | Redirect to an external https URL             |
 
 ## Adding a New Provider
 

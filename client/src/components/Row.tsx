@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Media } from "../lib/types";
@@ -18,11 +18,30 @@ export function Row({ title, titleColor, items, loading, ranked, seeAllTo }: Row
   const ref = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   const pad = isMobile ? 16 : 32;
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
   function scroll(dir: "left" | "right") {
     if (!ref.current) return;
     ref.current.scrollBy({ left: dir === "right" ? 650 : -650, behavior: "smooth" });
   }
+
+  function updateScrollState() {
+    const el = ref.current;
+    if (!el) return;
+    // 1px slack because scrollLeft can be fractional on zoomed / HiDPI screens
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    updateScrollState();
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [items, loading]);
 
   return (
     <section style={{ marginBottom: isMobile ? 32 : 52 }}>
@@ -63,39 +82,22 @@ export function Row({ title, titleColor, items, loading, ranked, seeAllTo }: Row
       </div>
 
       <div style={{ position: "relative" }}>
-        <button
-          onClick={() => scroll("left")}
-          aria-label="Scroll left"
-          style={{
-            position: "absolute", left: 0, top: 0, bottom: 20, zIndex: 10, width: 64,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: "linear-gradient(to right, rgba(10,10,10,0.97) 35%, transparent)",
-            opacity: 0, transition: "opacity 200ms",
-          }}
-          className="row-scroll-btn"
-        >
-          <div style={{
-            width: 32, height: 32, borderRadius: "50%",
-            background: "var(--surf-2)", border: "1px solid var(--line-2)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
-          }}>
-            <ChevronLeft size={15} />
-          </div>
-        </button>
+        {canScrollLeft && (
+          <button
+            onClick={() => scroll("left")}
+            aria-label="Scroll left"
+            className="row-scroll-btn"
+            style={{ left: 8 }}
+          >
+            <ChevronLeft size={20} />
+          </button>
+        )}
 
         <div
           ref={ref}
           className="row-scroll"
           style={{ padding: `4px ${pad}px 12px` }}
-          onMouseEnter={(e) => {
-            const btns = e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".row-scroll-btn");
-            btns?.forEach((b) => (b.style.opacity = "1"));
-          }}
-          onMouseLeave={(e) => {
-            const btns = e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".row-scroll-btn");
-            btns?.forEach((b) => (b.style.opacity = "0"));
-          }}
+          onScroll={updateScrollState}
         >
           {loading
             ? Array.from({ length: 8 }).map((_, i) => <CardSkeleton key={i} />)
@@ -104,26 +106,16 @@ export function Row({ title, titleColor, items, loading, ranked, seeAllTo }: Row
             ))}
         </div>
 
-        <button
-          onClick={() => scroll("right")}
-          aria-label="Scroll right"
-          style={{
-            position: "absolute", right: 0, top: 0, bottom: 20, zIndex: 10, width: 64,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: "linear-gradient(to left, rgba(10,10,10,0.97) 35%, transparent)",
-            opacity: 0, transition: "opacity 200ms",
-          }}
-          className="row-scroll-btn"
-        >
-          <div style={{
-            width: 32, height: 32, borderRadius: "50%",
-            background: "var(--surf-2)", border: "1px solid var(--line-2)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
-          }}>
-            <ChevronRight size={15} />
-          </div>
-        </button>
+        {canScrollRight && (
+          <button
+            onClick={() => scroll("right")}
+            aria-label="Scroll right"
+            className="row-scroll-btn"
+            style={{ right: 8 }}
+          >
+            <ChevronRight size={20} />
+          </button>
+        )}
       </div>
     </section>
   );

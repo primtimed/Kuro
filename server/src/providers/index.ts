@@ -1,4 +1,5 @@
-import type { Provider } from "../types/media.js";
+import { cached, TTL } from "../cache/index.js";
+import type { Media, Provider } from "../types/media.js";
 import jikan from "./jikan.js";
 import anilist from "./anilist.js";
 import consumet from "./consumet.js";
@@ -27,6 +28,14 @@ export function getProvider(mediaId: string): { provider: Provider; externalId: 
   if (!provider) throw new Error(`No provider registered for prefix "${prefix}"`);
 
   return { provider, externalId };
+}
+
+// Detail lookups are shared by the detail page, availability, streaming and torrent routes.
+export function getMediaDetail(mediaId: string): Promise<Media> {
+  return cached(`detail:${mediaId}`, TTL.DETAIL, () => {
+    const { provider, externalId } = getProvider(mediaId);
+    return provider.getDetail(externalId);
+  });
 }
 
 export { jikan, anilist, consumet, animepahe, tvmaze };

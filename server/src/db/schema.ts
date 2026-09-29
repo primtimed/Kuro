@@ -85,6 +85,73 @@ CREATE TABLE IF NOT EXISTS favorite_series (
   PRIMARY KEY (media_id, account_id)
 );
 
+-- Household members. ids match the old hardcoded client profiles ("1".."5") so library rows keep working.
+-- google_sub is Google's stable account id; email is kept only to show who is linked.
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL,
+  initial TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
+  is_shared INTEGER NOT NULL DEFAULT 0,
+  google_sub TEXT UNIQUE,
+  google_email TEXT,
+  pin_hash TEXT,
+  pin_failures INTEGER NOT NULL DEFAULT 0,
+  pin_locked_until INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- One-time links that attach a Google account to a profile. kind 'setup' also grants admin.
+CREATE TABLE IF NOT EXISTS invites (
+  token_hash TEXT NOT NULL PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'invite',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);
+
+-- Logged-in devices. owner_profile_id is the person who signed in (or approved a TV);
+-- active_profile_id is whose profile the device is currently using.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT NOT NULL PRIMARY KEY,
+  owner_profile_id TEXT NOT NULL,
+  active_profile_id TEXT NOT NULL,
+  device_name TEXT NOT NULL,
+  device_kind TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_owner ON sessions (owner_profile_id);
+
+-- TV pairing: the TV holds poll_token, a signed-in phone approves the short code.
+CREATE TABLE IF NOT EXISTS pairings (
+  code TEXT NOT NULL PRIMARY KEY,
+  poll_token_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  approved_by_profile_id TEXT,
+  device_name TEXT
+);
+
+-- Upstream API responses (AniList, TVMaze, …) as JSON, so restarts don't start with a cold cache
+CREATE TABLE IF NOT EXISTS api_cache (
+  key TEXT NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+-- Live TV channel ids are iptv-org ids (e.g. "AT5.nl"), not media ids, so they live apart from favorites
+CREATE TABLE IF NOT EXISTS live_favorites (
+  account_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, channel_id)
+);
+
 CREATE TABLE IF NOT EXISTS watched_shows (
   media_id TEXT NOT NULL,
   account_id TEXT NOT NULL DEFAULT '1',

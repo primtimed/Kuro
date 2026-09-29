@@ -1,11 +1,13 @@
 // anikototv.to stream provider
-// Uses sitemap for anime discovery, FlareSolverr CF cookies for episode AJAX,
-// and FlareSolverr page load to extract megaplay.buzz embed URLs.
+// Uses sitemap for anime discovery and the site's own AJAX endpoints (with FlareSolverr
+// Cloudflare cookies when available) for episode lists and megaplay.buzz embed URLs.
 
 import { cache } from "../cache/index.js";
+import { getSiteOrigin } from "./everythingmoe.js";
 import type { StreamResult } from "../types/media.js";
 
-const BASE = "https://anikototv.to";
+// everythingmoe tracks the site's current domain; the constant covers the time before it loads.
+const BASE = () => getSiteOrigin("anikoto") ?? "https://anikototv.to";
 const FLARE = () => process.env.FLARESOLVERR_URL ?? "http://localhost:8191";
 
 // ── FlareSolverr session (CF clearance cookies) ───────────────────────────────
@@ -19,7 +21,7 @@ async function getSession(): Promise<FlareSession> {
   const res = await fetch(`${FLARE()}/v1`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cmd: "request.get", url: `${BASE}/`, maxTimeout: 20000 }),
+    body: JSON.stringify({ cmd: "request.get", url: `${BASE()}/`, maxTimeout: 20000 }),
     signal: AbortSignal.timeout(25000),
   });
   if (!res.ok) throw new Error(`FlareSolverr ${res.status}`);
@@ -35,13 +37,24 @@ async function getSession(): Promise<FlareSession> {
   return _session;
 }
 
+// Cloudflare only challenges anikototv some of the time, so a missing FlareSolverr
+// shouldn't stop requests that would have gone through without clearance cookies.
+async function sessionOrDefault(): Promise<Pick<FlareSession, "cookieHeader" | "userAgent">> {
+  try {
+    return await getSession();
+  } catch (err) {
+    console.error("[anikoto] FlareSolverr unavailable, trying without clearance cookies:", (err as Error).message);
+    return { cookieHeader: "", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36" };
+  }
+}
+
 async function cfGet(path: string, referer?: string): Promise<string> {
-  const sess = await getSession();
-  const res = await fetch(`${BASE}${path}`, {
+  const sess = await sessionOrDefault();
+  const res = await fetch(`${BASE()}${path}`, {
     headers: {
       Cookie: sess.cookieHeader,
       "User-Agent": sess.userAgent,
-      Referer: referer ?? `${BASE}/`,
+      Referer: referer ?? `${BASE()}/`,
       "X-Requested-With": "XMLHttpRequest",
       Accept: "*/*",
     },
@@ -69,7 +82,7 @@ function normSlug(title: string): string {
 async function ensureSitemap(): Promise<void> {
   if (Date.now() - _sitemapLoadedAt < SITEMAP_TTL && _sitemapMap.size > 0) return;
 
-  const indexRes = await fetch(`${BASE}/sitemap.xml`, {
+  const indexRes = await fetch(`${BASE()}/sitemap.xml`, {
     headers: { "User-Agent": "Mozilla/5.0" },
     signal: AbortSignal.timeout(12000),
   });
@@ -79,7 +92,7 @@ async function ensureSitemap(): Promise<void> {
 
   const results = await Promise.allSettled(
     nums.map((n) =>
-      fetch(`${BASE}/sitemap/list-${n}.xml`, {
+      fetch(`${BASE()}/sitemap/list-${n}.xml`, {
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(15000),
       }).then((r) => r.text())
@@ -132,7 +145,7 @@ export async function getAnimeId(slug: string): Promise<number> {
   const hit = cache.get<number>(cacheKey);
   if (hit) return hit;
 
-  const html = await cfGet(`/watch/${slug}`, `${BASE}/`);
+  const html = await cfGet(`/watch/${slug}`, `${BASE()}/`);
   const m = html.match(/(?:watch-order|getinfo|episode\/list)\/(\d+)/);
   if (!m) throw new Error(`anikototv: no anime ID in page for ${slug}`);
   const id = parseInt(m[1], 10);
@@ -147,24 +160,31 @@ export interface AnikoEpisode {
   num: number;
   hasSub: boolean;
   hasDub: boolean;
+  serverIds: string; // opaque token for /ajax/server/list
 }
 
 export async function getEpisodeList(animeId: number): Promise<AnikoEpisode[]> {
-  const cacheKey = `aniko-eps:${animeId}`;
+  // v2: entries now carry serverIds; older cached lists without them must not be reused
+  const cacheKey = `aniko-eps-v2:${animeId}`;
   const hit = cache.get<AnikoEpisode[]>(cacheKey);
   if (hit) return hit;
 
-  const text = await cfGet(`/ajax/episode/list/${animeId}`, `${BASE}/`);
+  const text = await cfGet(`/ajax/episode/list/${animeId}`, `${BASE()}/`);
   const json = JSON.parse(text) as { result?: string };
   const html = json.result ?? "";
 
+  // Attributes are read individually because their order in the markup has changed before.
   const eps: AnikoEpisode[] = [];
-  for (const m of html.matchAll(/data-id="(\d+)"[^>]*data-num="(\d+)"[^>]*data-sub="(\d)"[^>]*data-dub="(\d)"/g)) {
+  for (const [tag] of html.matchAll(/<a\b[^>]*\bdata-num="[^"]*"[^>]*>/g)) {
+    const attr = (name: string) => tag.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] ?? "";
+    const num = parseInt(attr("data-num"), 10);
+    if (!Number.isFinite(num)) continue;
     eps.push({
-      id: parseInt(m[1], 10),
-      num: parseInt(m[2], 10),
-      hasSub: m[3] === "1",
-      hasDub: m[4] === "1",
+      id: parseInt(attr("data-id"), 10),
+      num,
+      hasSub: attr("data-sub") === "1",
+      hasDub: attr("data-dub") === "1",
+      serverIds: attr("data-ids"),
     });
   }
 
@@ -172,37 +192,45 @@ export async function getEpisodeList(animeId: number): Promise<AnikoEpisode[]> {
   return eps;
 }
 
-// ── Megaplay embed URL ────────────────────────────────────────────────────────
-// FlareSolverr loads the watch page with JS execution, extracting the megaplay iframe src.
+// ── Episode servers → embed URLs ─────────────────────────────────────────────
+// Mirrors the site's own player: /ajax/server/list lists the sub/dub servers for an
+// episode, and /ajax/server?get=<link-id> resolves one to a megaplay.buzz embed URL.
 
-async function getMegaplayUrl(slug: string, episodeNum: number, dub: boolean): Promise<string | null> {
-  const cacheKey = `megaplay:${slug}:${episodeNum}:${dub ? "dub" : "sub"}`;
+interface AnikoServer { name: string; linkId: string }
+
+const SERVER_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function getEpisodeServers(serverIds: string): Promise<Record<"sub" | "dub", AnikoServer[]>> {
+  const cacheKey = `aniko-servers:${serverIds}`;
+  const hit = cache.get<Record<"sub" | "dub", AnikoServer[]>>(cacheKey);
+  if (hit) return hit;
+
+  const json = JSON.parse(await cfGet(`/ajax/server/list?servers=${encodeURIComponent(serverIds)}`)) as { result?: string };
+  const html = json.result ?? "";
+  const servers = { sub: [] as AnikoServer[], dub: [] as AnikoServer[] };
+  for (const type of ["sub", "dub"] as const) {
+    const block = html.split(`data-type="${type}"`)[1]?.split("data-type=")[0] ?? "";
+    for (const m of block.matchAll(/data-link-id="([^"]+)"[^>]*>([^<]+)</g)) {
+      servers[type].push({ linkId: m[1], name: m[2].trim() });
+    }
+  }
+
+  if (servers.sub.length + servers.dub.length > 0) cache.set(cacheKey, servers, SERVER_TTL_MS);
+  return servers;
+}
+
+async function resolveServerUrl(linkId: string): Promise<string | null> {
+  const cacheKey = `aniko-server-url:${linkId}`;
   const hit = cache.get<string>(cacheKey);
   if (hit) return hit;
 
-  const watchUrl = `${BASE}/watch/${slug}/ep-${episodeNum}`;
-  try {
-    const res = await fetch(`${FLARE()}/v1`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cmd: "request.get", url: watchUrl, maxTimeout: 35000 }),
-      signal: AbortSignal.timeout(40000),
-    });
-    if (!res.ok) return null;
-    const json = await res.json() as { solution?: { response?: string } };
-    const html = json.solution?.response ?? "";
-    const m = html.match(/src="(https:\/\/megaplay\.buzz\/[^"]+)"/);
-    if (!m) return null;
-
-    // Replace audio type if dub requested
-    let url = m[1];
-    if (dub && url.includes("/sub")) url = url.replace("/sub", "/dub");
-
-    cache.set(cacheKey, url, 6 * 60 * 60 * 1000); // 6 hours
-    return url;
-  } catch {
-    return null;
-  }
+  const json = JSON.parse(await cfGet(`/ajax/server?get=${encodeURIComponent(linkId)}`)) as {
+    status?: number;
+    result?: { url?: string };
+  };
+  const url = json.status === 200 ? json.result?.url ?? null : null;
+  if (url) cache.set(cacheKey, url, SERVER_TTL_MS);
+  return url;
 }
 
 // ── Main stream function ──────────────────────────────────────────────────────
@@ -221,16 +249,26 @@ export async function streamViaAnikoto(
   const ep = episodes.find((e) => e.num === episodeNum);
   if (!ep) throw new Error(`Episode ${episodeNum} not available on anikototv.to`);
 
-  const useDub = wantDub && ep.hasDub;
-  const watchUrl = `${BASE}/watch/${slug}/ep-${episodeNum}`;
+  const watchUrl = `${BASE()}/watch/${slug}/ep-${episodeNum}`;
+  const servers = ep.serverIds
+    ? await getEpisodeServers(ep.serverIds).catch((err: unknown) => {
+        console.error(`[anikoto] server list for ${slug} ep ${episodeNum} failed:`, err);
+        return { sub: [], dub: [] };
+      })
+    : { sub: [], dub: [] };
 
-  // Try to get the megaplay embed URL
-  const embedUrl = await getMegaplayUrl(slug, episodeNum, useDub);
-  if (embedUrl) {
-    return { url: embedUrl, type: "embed", subtitles: [], dubbed: useDub };
+  const useDub = wantDub && servers.dub.length > 0;
+  const candidates = useDub ? servers.dub : servers.sub;
+  // Resolve every server up front so the player can switch instantly if one fails to load.
+  const resolved = await Promise.all(
+    candidates.map(async (s) => ({ name: s.name, url: await resolveServerUrl(s.linkId).catch(() => null) }))
+  );
+  const playable = resolved.filter((s): s is { name: string; url: string } => !!s.url);
+  if (playable.length > 0) {
+    return { url: playable[0].url, type: "embed", subtitles: [], dubbed: useDub, servers: playable };
   }
 
-  // FlareSolverr couldn't load the watch page — return the watch URL as fallback
+  // No server resolved — link to the episode on the site itself as a last resort
   return {
     url: watchUrl,
     type: "embed",
@@ -238,4 +276,64 @@ export async function streamViaAnikoto(
     dubbed: useDub,
     watchUrl,
   };
+}
+
+// Highest episode number anikototv actually has, which runs ahead of AniList's episode
+// listings for airing shows. Null when the show can't be found there.
+export async function getLatestEpisode(titles: string[]): Promise<number | null> {
+  const slug = await findSlug(titles);
+  if (!slug) return null;
+  const episodes = await getEpisodeList(await getAnimeId(slug));
+  const released = episodes.filter((e) => e.hasSub || e.hasDub).map((e) => e.num);
+  return released.length > 0 ? Math.max(...released) : null;
+}
+
+// ── Sub / dub catalog ─────────────────────────────────────────────────────────
+// AniList has no sub/dub metadata; anikoto's /filter page lists every title it has each for.
+
+export interface CatalogListing {
+  title: string;
+  romajiTitle?: string;
+}
+
+// anikoto's /filter genre IDs for the genres Browse offers (AniList genre names)
+const GENRE_IDS: Record<string, string> = {
+  Action: "1", Adventure: "2", Comedy: "8", Drama: "62", Ecchi: "214", Fantasy: "3",
+  Horror: "222", "Mahou Shoujo": "2310", Mecha: "123", Music: "242", Mystery: "57",
+  Psychological: "73", Romance: "28", "Sci-Fi": "12", "Slice of Life": "35",
+  Sports: "29", Supernatural: "9", Thriller: "54",
+};
+
+export async function listByAudio(
+  audio: "sub" | "dub",
+  page: number,
+  keyword: string,
+  genre: string
+): Promise<{ items: CatalogListing[]; hasNextPage: boolean }> {
+  const params = new URLSearchParams({ "language[]": audio, page: String(page) });
+  if (keyword) params.set("keyword", keyword);
+  else params.set("sort", "most-viewed");
+  if (Object.hasOwn(GENRE_IDS, genre)) params.set("genre[]", GENRE_IDS[genre]);
+
+  const res = await fetch(`${BASE()}/filter?${params}`, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`anikototv /filter → ${res.status}`);
+  const html = await res.text();
+
+  const items = [...html.matchAll(/class="name d-title"[^>]*?(?:data-jp="([^"]*)")?>([^<]+)<\/a>/g)].map((m) => ({
+    title: decodeHtml(m[2].trim()),
+    romajiTitle: m[1] ? decodeHtml(m[1]) : undefined,
+  }));
+  return { items, hasNextPage: html.includes(`page=${page + 1}`) };
+}
+
+function decodeHtml(s: string): string {
+  return s
+    .replace(/&#0*39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }

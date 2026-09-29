@@ -23,6 +23,7 @@ export function Home() {
   const [favorites, setFavorites] = useState<Media[]>([]);
   const [recommended, setRecommended] = useState<Media[]>([]);
   const [newSeasons, setNewSeasons] = useState<Media[]>([]);
+  const [newEpisodes, setNewEpisodes] = useState<Media[]>([]);
   const [recsLoading, setRecsLoading] = useState(true);
   const [newSeasonsLoading, setNewSeasonsLoading] = useState(true);
 
@@ -87,6 +88,10 @@ export function Home() {
       .then((s) => setNewSeasons(s))
       .catch(() => {})
       .finally(() => setNewSeasonsLoading(false));
+
+    api.library.newEpisodes()
+      .then(setNewEpisodes)
+      .catch((err: unknown) => console.error("[home] loading new episodes failed:", err));
   }, [trendingLoading]);
 
 
@@ -103,6 +108,7 @@ export function Home() {
       <div style={{ display: "flex", alignItems: "flex-start" }}>
         <main style={{ flex: 1, minWidth: 0, paddingTop: isMobile ? 24 : 44, paddingBottom: 88 }}>
           {history.length > 0 && <Row title="Continue Watching" items={history} seeAllTo="/library?tab=history" />}
+          {newEpisodes.length > 0 && <Row title="New Episodes — Shows You're Watching" items={newEpisodes} />}
           {(newSeasonsLoading || newSeasons.length > 0) && (
             <Row title="New Seasons — From Your List" items={newSeasons} loading={newSeasonsLoading} seeAllTo="/browse/new-seasons" />
           )}

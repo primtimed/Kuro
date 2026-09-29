@@ -54,6 +54,7 @@ export interface StreamResult {
   headers?: Record<string, string>;
   dubbed?: boolean;
   watchUrl?: string; // fallback: direct link to source site when embed isn't available
+  servers?: { name: string; url: string }[]; // alternative embeds for the same episode
 }
 
 export interface SubtitleTrack {

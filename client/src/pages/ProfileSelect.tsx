@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { ACCOUNTS, GUEST_ACCOUNT, type Account } from "../lib/accounts";
-import { useAccount } from "../context/AccountContext";
+import { Lock } from "lucide-react";
+
 import { KuroLogo } from "../components/Navbar";
+import { useAccount } from "../context/AccountContext";
+import { GUEST_ACCOUNT } from "../lib/accounts";
 
+// Full-screen picker, the easiest way to switch profiles with a TV remote.
 export function ProfileSelect() {
-  const { setAccount } = useAccount();
+  const { profiles, requestProfile } = useAccount();
   const [hovered, setHovered] = useState<string | null>(null);
-
-  function pick(a: Account) {
-    setAccount(a);
-  }
+  const members = profiles.filter((p) => !p.isGuest);
 
   return (
     <div style={{
@@ -35,12 +35,12 @@ export function ProfileSelect() {
         justifyContent: "center",
         maxWidth: 600,
       }}>
-        {ACCOUNTS.map((a, i) => (
+        {members.map((a, i) => (
           <button
             key={a.id}
             // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus={i === 0}
-            onClick={() => pick(a)}
+            onClick={() => requestProfile(a)}
             onMouseEnter={() => setHovered(a.id)}
             onMouseLeave={() => setHovered(null)}
             onFocus={() => setHovered(a.id)}
@@ -55,9 +55,10 @@ export function ProfileSelect() {
               transition: "transform 120ms ease",
               transform: hovered === a.id ? "scale(1.05)" : "scale(1)",
             }}
-            aria-label={`Select profile ${a.name}`}
+            aria-label={`Select profile ${a.name}${a.needsPin ? " (PIN protected)" : ""}`}
           >
             <div style={{
+              position: "relative",
               width: 88,
               height: 88,
               borderRadius: 10,
@@ -73,6 +74,9 @@ export function ProfileSelect() {
               transition: "border-color 120ms ease, box-shadow 120ms ease",
             }}>
               {a.initial}
+              {a.needsPin && (
+                <Lock size={14} aria-hidden="true" style={{ position: "absolute", right: 6, bottom: 6, color: "var(--text)", opacity: 0.85 }} />
+              )}
             </div>
             <span style={{
               fontSize: 13,
@@ -87,7 +91,7 @@ export function ProfileSelect() {
       </div>
 
       <button
-        onClick={() => pick(GUEST_ACCOUNT)}
+        onClick={() => requestProfile(GUEST_ACCOUNT)}
         style={{
           background: "none",
           border: "none",

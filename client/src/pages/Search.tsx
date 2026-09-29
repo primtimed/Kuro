@@ -16,16 +16,21 @@ export function Search() {
   const [results, setResults] = useState<Media[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [hasError, setHasError] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestRequestRef = useRef(0);
 
   function doSearch(q: string) {
     setSearchParams(q ? { q } : {}, { replace: true });
     setLoading(true);
-    const searchFn = mode === "tv" ? api.tv.search : api.search;
+    // Responses can arrive out of order while typing; only the newest one may update the page.
+    const requestId = ++latestRequestRef.current;
+    const isLatest = () => requestId === latestRequestRef.current;
+    const searchFn = mode === "tv" ? api.tv.search : (query: string) => api.search(query, 1).then((r) => r.items);
     searchFn(q)
-      .then((r) => { setResults(r); setSearched(true); })
-      .catch(() => setResults([]))
-      .finally(() => setLoading(false));
+      .then((r) => { if (isLatest()) { setResults(r); setHasError(false); setSearched(true); } })
+      .catch(() => { if (isLatest()) { setResults([]); setHasError(true); setSearched(true); } })
+      .finally(() => { if (isLatest()) setLoading(false); });
   }
 
   useEffect(() => {
@@ -76,7 +81,13 @@ export function Search() {
         </div>
       )}
 
-      {!loading && searched && results.length === 0 && (
+      {!loading && searched && hasError && (
+        <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
+          Search is temporarily unavailable. Try again in a minute.
+        </p>
+      )}
+
+      {!loading && searched && !hasError && results.length === 0 && (
         <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
           {query ? `No results for "${query}"` : "Nothing found."}
         </p>

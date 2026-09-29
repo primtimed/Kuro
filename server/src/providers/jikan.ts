@@ -3,7 +3,7 @@ import type { Media, Episode, StreamResult, Provider, CastMember } from "../type
 const BASE = "https://api.jikan.moe/v4";
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Jikan ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }

@@ -2,33 +2,85 @@ import type { Media, Episode, StreamResult, Provider, CastMember } from "../type
 
 const ENDPOINT = "https://graphql.anilist.co";
 
-// Server-side response cache — avoids hammering AniList on every page load.
-const gqlCache = new Map<string, { data: unknown; expires: number }>();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+class AniListError extends Error {
+  constructor(public code: "RATE_LIMITED" | "UNREACHABLE" | "HTTP_ERROR" | "GRAPHQL_ERROR", message: string) {
+    super(message);
+    this.name = "AniListError";
+  }
+}
 
-async function gql<T>(query: string, variables: Record<string, unknown>, attempt = 0): Promise<T> {
+// Server-side response cache — avoids hammering AniList on every page load.
+// Expired entries are kept on purpose: they are served when AniList is rate-limiting or down.
+const gqlCache = new Map<string, { data: unknown; expires: number }>();
+const inFlight = new Map<string, Promise<unknown>>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+// AniList normally answers in <500 ms. Connections that stall (seen under load) hang for
+// Node's 10 s connect timeout, so give up sooner and retry on a fresh connection.
+const ATTEMPT_TIMEOUT_MS = 6_000;
+const NETWORK_RETRIES = 2;
+
+// AniList allows ~30 requests/min. Requests sent during a 429 penalty only extend it,
+// so fail fast until the Retry-After window has passed.
+let rateLimitedUntil = 0;
+
+async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
   const key = JSON.stringify({ query, variables });
   const hit = gqlCache.get(key);
   if (hit && hit.expires > Date.now()) return hit.data as T;
 
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
+  // Page sections often ask for the same data at once — share one upstream request.
+  const pending = inFlight.get(key);
+  if (pending) return pending as Promise<T>;
 
-  if (res.status === 429 && attempt < 3) {
-    const retryAfter = res.headers.get("Retry-After");
-    const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000 * 2 ** attempt;
-    await new Promise((r) => setTimeout(r, delay));
-    return gql<T>(query, variables, attempt + 1);
+  const request = fetchGql<T>(query, variables)
+    .then((data) => {
+      gqlCache.set(key, { data, expires: Date.now() + CACHE_TTL });
+      return data;
+    })
+    .catch((err: unknown) => {
+      if (hit) return hit.data as T;
+      throw err;
+    })
+    .finally(() => inFlight.delete(key));
+
+  inFlight.set(key, request);
+  return request;
+}
+
+async function fetchGql<T>(query: string, variables: Record<string, unknown>, attempt = 0): Promise<T> {
+  const waitMs = rateLimitedUntil - Date.now();
+  if (waitMs > 0) {
+    throw new AniListError("RATE_LIMITED", `AniList rate limit reached, try again in ${Math.ceil(waitMs / 1000)}s`);
   }
 
-  if (!res.ok) throw new Error(`AniList GraphQL → ${res.status}`);
-  const json = (await res.json()) as { data: T; errors?: { message: string }[] };
-  if (json.errors?.length) throw new Error(json.errors[0].message);
+  let res: Response;
+  try {
+    res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (attempt < NETWORK_RETRIES) {
+      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+      return fetchGql<T>(query, variables, attempt + 1);
+    }
+    const cause = (err as { cause?: { code?: string } }).cause?.code ?? (err as Error).message;
+    throw new AniListError("UNREACHABLE", `AniList unreachable (${cause})`);
+  }
 
-  gqlCache.set(key, { data: json.data, expires: Date.now() + CACHE_TTL });
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("Retry-After") ?? "", 10);
+    const penaltyMs = (Number.isFinite(retryAfter) ? retryAfter : 60) * 1000;
+    rateLimitedUntil = Date.now() + penaltyMs;
+    throw new AniListError("RATE_LIMITED", `AniList rate limit reached, try again in ${Math.ceil(penaltyMs / 1000)}s`);
+  }
+
+  if (!res.ok) throw new AniListError("HTTP_ERROR", `AniList GraphQL → ${res.status}`);
+  const json = (await res.json()) as { data: T; errors?: { message: string }[] };
+  if (json.errors?.length) throw new AniListError("GRAPHQL_ERROR", json.errors[0].message);
+
   return json.data;
 }
 
@@ -297,6 +349,48 @@ const anilist: Provider = {
     return results;
   },
 
+  // One request per 50 IDs — fetching library cards one by one blows through the 30 req/min limit.
+  async getCardsByIds(externalIds: string[]): Promise<Media[]> {
+    const PAGE_SIZE = 50;
+    const results: Media[] = [];
+    for (let i = 0; i < externalIds.length; i += PAGE_SIZE) {
+      const ids = externalIds.slice(i, i + PAGE_SIZE).map((id) => parseInt(id, 10));
+      const data = await gql<{ Page: { media: unknown[] } }>(
+        `query ($ids: [Int]) {
+          Page(perPage: ${PAGE_SIZE}) {
+            media(id_in: $ids, type: ANIME) {
+              ${CARD_FIELDS}
+            }
+          }
+        }`,
+        { ids }
+      );
+      results.push(...(data.Page.media ?? []).map(mapMedia));
+    }
+    return results;
+  },
+
+  // Best AniList match per title, in input order (null when nothing matches). Aliased
+  // Page queries batch the lookups — a missing Media(search:) would fail the whole request.
+  async matchTitles(titles: string[]): Promise<(Media | null)[]> {
+    const CHUNK = 10;
+    const results: (Media | null)[] = [];
+    for (let i = 0; i < titles.length; i += CHUNK) {
+      const chunk = titles.slice(i, i + CHUNK);
+      const varDefs = chunk.map((_, j) => `$t${j}: String`).join(", ");
+      const aliases = chunk
+        .map((_, j) => `m${j}: Page(perPage: 1) { media(search: $t${j}, type: ANIME) { ${CARD_FIELDS} } }`)
+        .join("\n");
+      const variables = Object.fromEntries(chunk.map((t, j) => [`t${j}`, t]));
+      const data = await gql<Record<string, { media: unknown[] }>>(`query (${varDefs}) { ${aliases} }`, variables);
+      chunk.forEach((_, j) => {
+        const hit = data[`m${j}`]?.media?.[0];
+        results.push(hit ? mapMedia(hit) : null);
+      });
+    }
+    return results;
+  },
+
   async getByGenre(genre: string): Promise<Media[]> {
     const data = await gql<{ Page: { media: unknown[] } }>(
       `query ($genre: String) {
@@ -399,24 +493,27 @@ const anilist: Provider = {
 
     return result;
   },
-  async searchFiltered(query: string, format?: string): Promise<Media[]> {
+  async searchFiltered(
+    query: string, format?: string, genre?: string, page = 1
+  ): Promise<{ items: Media[]; hasNextPage: boolean }> {
     const hasQuery = !!query.trim();
     const hasFormat = !!format;
-    if (!hasQuery && !hasFormat) return [];
+    if (!hasQuery && !hasFormat && !genre) return { items: [], hasNextPage: false };
 
     // Build variables and args dynamically so GraphQL never gets a null search
-    const varDefs: string[] = [];
+    const varDefs: string[] = ["$page: Int"];
     const mediaArgs: string[] = ["type: ANIME"];
-    const params: Record<string, unknown> = {};
+    const params: Record<string, unknown> = { page };
 
     if (hasQuery) { varDefs.push("$q: String"); mediaArgs.push("search: $q"); params.q = query; }
     if (hasFormat) { varDefs.push("$format: [MediaFormat]"); mediaArgs.push("format_in: $format"); params.format = [format]; }
+    if (genre) { varDefs.push("$genre: String"); mediaArgs.push("genre: $genre"); params.genre = genre; }
     mediaArgs.push(`sort: ${hasQuery ? "SEARCH_MATCH" : "POPULARITY_DESC"}`);
 
-    const varStr = varDefs.length ? `(${varDefs.join(", ")})` : "";
-    const data = await gql<{ Page: { media: unknown[] } }>(
-      `query ${varStr} {
-        Page(perPage: 20) {
+    const data = await gql<{ Page: { pageInfo: { hasNextPage: boolean }; media: unknown[] } }>(
+      `query (${varDefs.join(", ")}) {
+        Page(perPage: 20, page: $page) {
+          pageInfo { hasNextPage }
           media(${mediaArgs.join(", ")}) {
             ${MEDIA_FIELDS}
           }
@@ -424,16 +521,18 @@ const anilist: Provider = {
       }`,
       params
     );
-    return (data.Page.media ?? []).map(mapMedia);
+    return { items: (data.Page.media ?? []).map(mapMedia), hasNextPage: data.Page.pageInfo?.hasNextPage ?? false };
   },
 } as Provider & {
   getTrending(): Promise<Media[]>;
   getSeasonal(): Promise<Media[]>;
   getRecommendations(id: string): Promise<Media[]>;
   getByGenre(genre: string): Promise<Media[]>;
+  getCardsByIds(externalIds: string[]): Promise<Media[]>;
+  matchTitles(titles: string[]): Promise<(Media | null)[]>;
   batchGetSequels(ids: string[], fromMs: number, toMs: number): Promise<Media[]>;
   getRelations(externalId: string): Promise<{ relationType: string; media: Media }[]>;
-  searchFiltered(query: string, format?: string): Promise<Media[]>;
+  searchFiltered(query: string, format?: string, genre?: string, page?: number): Promise<{ items: Media[]; hasNextPage: boolean }>;
 };
 
 export default anilist;

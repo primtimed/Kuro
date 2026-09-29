@@ -5,8 +5,9 @@
 import vm from "vm";
 import type { Media, Episode, StreamResult, Provider } from "../types/media.js";
 import { cache } from "../cache/index.js";
-import { getScraperUrl } from "../lib/scraper-config.js";
-const BASE = () => getScraperUrl("animepahe", "https://animepahe.com");
+import { getSiteOrigin } from "./everythingmoe.js";
+// Follow the domain everythingmoe currently lists; the constant covers the time before it loads.
+const BASE = () => getSiteOrigin("animepahe") ?? "https://animepahe.com";
 const FLARE = process.env.FLARESOLVERR_URL ?? "http://localhost:8191";
 
 // ── Cloudflare session cache ──────────────────────────────────────────────────
@@ -274,24 +275,3 @@ const animepahe: Provider = {
 
 export default animepahe;
 
-// Direct stream-by-title helper (for use in stream route bridge)
-export async function streamAnimepahe(
-  titles: string[],
-  episodeNum: number
-): Promise<{ stream: StreamResult; animepaheId: string }> {
-  // Search all titles in parallel — first non-empty result wins
-  const searches = await Promise.allSettled(titles.map((t) => animepahe.search(t)));
-
-  for (const r of searches) {
-    if (r.status !== "fulfilled" || r.value.length === 0) continue;
-    const best = r.value[0];
-    const externalId = best.id.replace("animepahe:", "");
-    try {
-      const stream = await animepahe.getStream(externalId, episodeNum);
-      // Pre-warm the next episode's session in the background (no await)
-      getEpisodeSession(externalId, episodeNum + 1).catch(() => {});
-      return { stream, animepaheId: best.id };
-    } catch { continue; }
-  }
-  throw new Error("AnimePahe: no stream found for the given titles");
-}

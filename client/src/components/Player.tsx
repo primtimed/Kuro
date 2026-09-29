@@ -33,20 +33,9 @@ interface PlayerProps {
 // Embed player: shows a megaplay.buzz or similar iframe.
 // Falls back to a "Watch on site" button when only a watchUrl is available.
 function EmbedPlayer({ stream }: { stream: StreamResult }) {
-  // If we have a direct embed URL (megaplay.buzz), show the iframe
-  if (!stream.watchUrl) {
-    return (
-      <iframe
-        src={stream.url}
-        style={{ width: "100%", height: "100%", border: "none", background: "#000" }}
-        allow="autoplay; fullscreen; encrypted-media"
-        allowFullScreen
-        referrerPolicy="origin"
-      />
-    );
-  }
+  if (!stream.watchUrl) return <EmbedFrame key={stream.url} stream={stream} />;
 
-  // Fallback: FlareSolverr couldn't load the page — show a direct link
+  // Fallback: no server resolved to an embed — show a direct link
   return (
     <div style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
@@ -70,6 +59,50 @@ function EmbedPlayer({ stream }: { stream: StreamResult }) {
       <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, margin: 0 }}>
         Opens anikototv.to in a new tab
       </p>
+    </div>
+  );
+}
+
+// Kuro can't see inside the embedded player, so when a server stalls or errors the viewer
+// picks another one; the source offers several mirrors per episode.
+function EmbedFrame({ stream }: { stream: StreamResult }) {
+  const servers = stream.servers?.length ? stream.servers : [{ name: "Server 1", url: stream.url }];
+  const [activeUrl, setActiveUrl] = useState(servers[0].url);
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <iframe
+        key={activeUrl}
+        src={activeUrl}
+        title="Episode player"
+        style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
+        allow="autoplay; fullscreen; encrypted-media"
+        allowFullScreen
+        referrerPolicy="origin"
+      />
+      {servers.length > 1 && (
+        <div role="group" aria-label="Video server" style={{
+          position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", gap: 6,
+          padding: 4, borderRadius: 8, background: "rgba(0,0,0,0.7)", border: "1px solid var(--line-2)",
+        }}>
+          {servers.map((s) => (
+            <button
+              key={s.url}
+              onClick={() => setActiveUrl(s.url)}
+              aria-pressed={activeUrl === s.url}
+              className="mono"
+              style={{
+                minHeight: 32, padding: "0 10px", borderRadius: 5, fontSize: 11, letterSpacing: 0.5,
+                background: activeUrl === s.url ? "var(--accent)" : "transparent",
+                color: activeUrl === s.url ? "var(--text)" : "var(--muted)",
+                border: "none",
+              }}
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
