@@ -125,6 +125,7 @@ function mapShow(s: TVMazeShow): Media {
     airedTo: s.ended ?? undefined,
     duration: s.averageRuntime ?? undefined,
     studios: network ? [network] : undefined,
+    imdbId: s.externals?.imdb ?? undefined,
   };
 }
 

@@ -1,11 +1,13 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import tvmaze from "../providers/tvmaze.js";
 import {
   streamTVEpisode,
   streamWatchtvDirect,
   scrapeCatalog,
   getWatchtvEpisodes,
+  toMediaStub,
   watchtvProvider,
+  WatchtvError,
 } from "../providers/watchtv.js";
 import { cache, cached, TTL } from "../cache/index.js";
 import db from "../db/client.js";
@@ -125,15 +127,12 @@ router.get("/search", async (req, res) => {
   if (hit) return res.json(hit);
 
   try {
-    const qLower = q.toLowerCase();
-
-    // The catalog scrape can take over a minute; don't hold search results hostage to it.
-    // It keeps running in the background, so later searches include catalog matches.
+    // watchtv's mirrors can be slow or down; don't hold TVMaze results hostage to them.
     const catalogWithDeadline = Promise.race([
-      scrapeCatalog().catch(() => []),
-      new Promise<[]>((resolve) => setTimeout(() => resolve([]), CATALOG_SEARCH_DEADLINE_MS)),
+      watchtvProvider.search(q),
+      new Promise<Media[]>((resolve) => setTimeout(() => resolve([]), CATALOG_SEARCH_DEADLINE_MS)),
     ]);
-    const [tvmazeOutcome, catalogItems] = await Promise.all([
+    const [tvmazeOutcome, catalogMatches] = await Promise.all([
       tvmaze.search(q).then(
         (results) => ({ ok: true as const, results }),
         (err: unknown) => ({ ok: false as const, err })
@@ -141,23 +140,10 @@ router.get("/search", async (req, res) => {
       catalogWithDeadline,
     ]);
 
-    if (!tvmazeOutcome.ok && catalogItems.length === 0) {
+    if (!tvmazeOutcome.ok && catalogMatches.length === 0) {
       return res.status(502).json({ error: { code: "FETCH_ERROR", message: String(tvmazeOutcome.err) } });
     }
     const tvmazeResults = tvmazeOutcome.ok ? tvmazeOutcome.results : [];
-
-    // Filter catalog by query
-    const catalogMatches: Media[] = catalogItems
-      .filter((i) => i.title.toLowerCase().includes(qLower))
-      .map((i) => ({
-        id: `watchtv:${i.type}/${i.slug}`,
-        type: i.type === "movie" ? ("movie" as const) : ("series" as const),
-        title: i.title,
-        poster: i.poster,
-        synopsis: "",
-        genres: [],
-        cast: [],
-      }));
 
     // Merge: TVMaze first; skip watchtv entries whose title is already represented
     const tvmazeTitles = new Set(tvmazeResults.map((m) => m.title.toLowerCase()));
@@ -173,10 +159,11 @@ router.get("/search", async (req, res) => {
 });
 
 router.get("/watchtv/catalog", async (_req, res) => {
-  // A full scrape takes over a minute (and watchtv.click is often down), so answer after the
-  // deadline with whatever is cached; the scrape keeps running and fills the cache for next time.
-  // An empty result is cached too (watchtv.click is gone); it is retried hourly in the background.
-  const catalog = cached("tv:watchtv:catalog", 60 * 60 * 1000, loadWatchtvCatalog)
+  // A full scrape is slow (and the site's domain comes and goes), so answer after the deadline
+  // with whatever is cached; the scrape keeps running and fills the cache for next time.
+  // An empty result is cached too; it is retried hourly in the background.
+  // NOTE: v2 = watchtv.gd TMDB IDs; the old key holds dead watchtv.click slugs.
+  const catalog = cached("tv:watchtv:catalog:v2", 60 * 60 * 1000, loadWatchtvCatalog)
     .catch((err: unknown) => {
       console.error("[tv] watchtv catalog failed:", err);
       return [] as Media[];
@@ -186,16 +173,14 @@ router.get("/watchtv/catalog", async (_req, res) => {
 });
 
 async function loadWatchtvCatalog(): Promise<Media[]> {
-  const items = await scrapeCatalog();
-  return items.map((i) => ({
-    id: `watchtv:${i.type}/${i.slug}`,
-    type: i.type === "movie" ? ("movie" as const) : ("series" as const),
-    title: i.title,
-    poster: i.poster,
-    synopsis: "",
-    genres: [],
-    cast: [],
-  }));
+  return (await scrapeCatalog()).map(toMediaStub);
+}
+
+function sendWatchtvError(res: Response, err: unknown, fallbackStatus: number, fallbackCode: string) {
+  if (err instanceof WatchtvError && err.code !== "SITE_UNREACHABLE") {
+    return res.status(err.code === "NOT_FOUND" ? 404 : 400).json({ error: { code: err.code, message: err.message } });
+  }
+  return res.status(fallbackStatus).json({ error: { code: fallbackCode, message: String(err) } });
 }
 
 router.get("/:id/similar", async (req, res) => {
@@ -218,17 +203,10 @@ router.get("/:id/episodes", async (req, res) => {
   const id = decodeURIComponent(req.params.id);
 
   if (id.startsWith("watchtv:")) {
-    const rest = id.slice("watchtv:".length);
-    const slashIdx = rest.indexOf("/");
-    if (slashIdx === -1) return res.status(400).json({ error: { code: "INVALID_ID", message: "Invalid watchtv ID" } });
-    const type = rest.slice(0, slashIdx);
-    const slug = rest.slice(slashIdx + 1);
     try {
-      if (type === "movie") return res.json([{ number: 1, title: "Movie", seasonNumber: 1, episodeInSeason: 1 }]);
-      const episodes = await getWatchtvEpisodes(slug);
-      return res.json(episodes);
+      return res.json(await getWatchtvEpisodes(id.slice("watchtv:".length)));
     } catch (err) {
-      return res.status(500).json({ error: { code: "FETCH_ERROR", message: String(err) } });
+      return sendWatchtvError(res, err, 500, "FETCH_ERROR");
     }
   }
 
@@ -255,16 +233,10 @@ router.get("/:id/stream", async (req, res) => {
   }
 
   if (id.startsWith("watchtv:")) {
-    const rest = id.slice("watchtv:".length);
-    const slashIdx = rest.indexOf("/");
-    if (slashIdx === -1) return res.status(400).json({ error: { code: "INVALID_ID", message: "Invalid watchtv ID" } });
-    const type = rest.slice(0, slashIdx) as "series" | "movie";
-    const slug = rest.slice(slashIdx + 1);
     try {
-      const stream = await streamWatchtvDirect(type, slug, season, episode);
-      return res.json(stream);
+      return res.json(await streamWatchtvDirect(id.slice("watchtv:".length), season, episode));
     } catch (err) {
-      return res.status(502).json({ error: { code: "STREAM_ERROR", message: String(err) } });
+      return sendWatchtvError(res, err, 502, "STREAM_ERROR");
     }
   }
 
@@ -277,7 +249,7 @@ router.get("/:id/stream", async (req, res) => {
     const stream = await streamTVEpisode(externalId, season, episode);
     return res.json(stream);
   } catch (err) {
-    return res.status(502).json({ error: { code: "STREAM_ERROR", message: String(err) } });
+    return sendWatchtvError(res, err, 502, "STREAM_ERROR");
   }
 });
 
@@ -286,12 +258,11 @@ router.get("/:id", async (req, res) => {
 
   if (id.startsWith("watchtv:")) {
     const rest = id.slice("watchtv:".length);
-    if (rest.indexOf("/") === -1) return res.status(400).json({ error: { code: "INVALID_ID", message: "Invalid watchtv ID" } });
     const key = `tv:detail:${id}`;
     try {
       return res.json(await cached(key, TTL.DETAIL, () => watchtvProvider.getDetail(rest)));
     } catch (err) {
-      return res.status(500).json({ error: { code: "FETCH_ERROR", message: String(err) } });
+      return sendWatchtvError(res, err, 500, "FETCH_ERROR");
     }
   }
 

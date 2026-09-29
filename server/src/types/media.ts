@@ -43,6 +43,7 @@ export interface Media {
   studios?: string[];
   producers?: string[];
   malId?: number;
+  imdbId?: string;
   siteUrl?: string;
   mediaFormat?: string; // AniList format: TV, TV_SHORT, MOVIE, OVA, ONA, SPECIAL, MUSIC
 }

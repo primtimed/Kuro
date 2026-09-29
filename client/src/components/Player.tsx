@@ -82,7 +82,8 @@ function EmbedFrame({ stream }: { stream: StreamResult }) {
       />
       {servers.length > 1 && (
         <div role="group" aria-label="Video server" style={{
-          position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", gap: 6,
+          position: "absolute", top: 10, right: 10, zIndex: 20, display: "flex", flexWrap: "wrap",
+          justifyContent: "flex-end", maxWidth: "calc(100% - 20px)", gap: 6,
           padding: 4, borderRadius: 8, background: "rgba(0,0,0,0.7)", border: "1px solid var(--line-2)",
         }}>
           {servers.map((s) => (
