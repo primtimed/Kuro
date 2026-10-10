@@ -8,6 +8,8 @@ import { api } from "../lib/api";
 import { useMediaMode } from "../context/MediaModeContext";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useBrowseSearch } from "../hooks/useBrowseSearch";
+import { BrowseHero } from "../components/BrowseHero";
+import { GenreTiles } from "../components/GenreTiles";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -400,6 +402,9 @@ const TV_BROWSE_GENRES = [
   "Science-Fiction", "Supernatural", "Thriller", "Western",
 ];
 
+const TILE_ART_COUNT = 3;
+const TRENDING_GRID_COUNT = 14;
+
 function MainBrowse() {
   const navigate = useNavigate();
   const { mode } = useMediaMode();
@@ -414,6 +419,7 @@ function MainBrowse() {
   const [row2Loading, setRow2Loading] = useState(true);
   const search = useBrowseSearch({ mode, query, format, audio, genre });
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRow1([]);
@@ -425,12 +431,13 @@ function MainBrowse() {
     setAudio("");
     setGenre("");
 
+    const logError = (what: string) => (err: unknown) => console.error(`[browse] loading ${what} failed:`, err);
     if (mode === "tv") {
-      api.tv.trending().then(setRow1).catch(() => {}).finally(() => setRow1Loading(false));
-      api.tv.onAir().then(setRow2).catch(() => {}).finally(() => setRow2Loading(false));
+      api.tv.trending().then(setRow1).catch(logError("popular shows")).finally(() => setRow1Loading(false));
+      api.tv.onAir().then(setRow2).catch(logError("on-air shows")).finally(() => setRow2Loading(false));
     } else {
-      api.trending().then(setRow1).catch(() => {}).finally(() => setRow1Loading(false));
-      api.seasonal().then(setRow2).catch(() => {}).finally(() => setRow2Loading(false));
+      api.trending().then(setRow1).catch(logError("trending")).finally(() => setRow1Loading(false));
+      api.seasonal().then(setRow2).catch(logError("seasonal")).finally(() => setRow2Loading(false));
     }
   }, [mode]);
 
@@ -439,74 +446,121 @@ function MainBrowse() {
   const row2Label = mode === "tv" ? "On Air Today" : "This Season";
   const row1Path = "/browse/trending";
   const row2Path = mode === "tv" ? "/browse/onair" : "/browse/seasonal";
+  const pad = isMobile ? 16 : 32;
+
+  const pool = [...row1, ...row2.filter((m) => !row1.some((r) => r.id === m.id))].filter((m) => m.poster);
+
+  // Tile art comes from titles already on the page, so the tiles cost no extra requests.
+  function artFor(g: string): string[] {
+    const matches = pool.filter((m) => m.genres.includes(g)).slice(0, TILE_ART_COUNT);
+    const offset = browseGenres.indexOf(g) * TILE_ART_COUNT;
+    const fill = pool.filter((m) => !matches.includes(m));
+    while (matches.length < TILE_ART_COUNT && fill.length > 0) {
+      matches.push(fill[(offset + matches.length) % fill.length]);
+    }
+    return matches.map((m) => m.poster);
+  }
+
+  function scrollToResults() {
+    requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
+
+  function handleGenreSelect(g: string) {
+    // TV genres have their own page; anime genres filter in place so they combine with search, type and audio.
+    if (mode === "tv") {
+      navigate(`/genre/${encodeURIComponent(g)}`);
+      return;
+    }
+    const next = genre === g ? "" : g;
+    setGenre(next);
+    if (next) scrollToResults();
+  }
+
+  function clearAll() {
+    setQuery("");
+    setFormat("");
+    setAudio("");
+    setGenre("");
+  }
+
+  const formatLabel = FORMATS.find((f) => f.value === format)?.label;
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", paddingBottom: 88 }}>
-      <div style={{ padding: isMobile ? "70px 16px 0" : "104px 32px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 28 }}>
-          <span style={{ width: 3, height: 20, borderRadius: 2, background: "var(--accent)", flexShrink: 0 }} />
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>Browse</h1>
-        </div>
+    <div style={{ minHeight: "100vh", background: "var(--bg)", padding: `8px ${pad}px 88px` }}>
+      <BrowseHero
+        query={query}
+        onQueryChange={setQuery}
+        onSubmit={() => { inputRef.current?.blur(); scrollToResults(); }}
+        inputRef={inputRef}
+        collage={pool.map((m) => m.poster)}
+        placeholder={mode === "tv" ? "Search TV series…" : "Search anime, movies, OVAs…"}
+        {...(mode === "anime" ? {
+          formats: FORMATS, format, onFormatChange: setFormat,
+          audio, onAudioChange: setAudio,
+        } : {})}
+      />
 
-        <FilterBar
-          query={query}
-          format={format}
-          audio={audio}
-          onQueryChange={setQuery}
-          onFormatChange={setFormat}
-          onAudioChange={setAudio}
-          inputRef={inputRef}
-          showAudio={mode === "anime"}
-          showFormat={mode === "anime"}
-        />
-
-        {/* Genre chips */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 32 }}>
-          {browseGenres.map((g) => {
-            const isActive = genre === g;
-            return (
-            <button
-              key={g}
-              // Anime genres filter in place so they combine with search, format and sub/dub
-              onClick={() => mode === "tv" ? navigate(`/genre/${encodeURIComponent(g)}`) : setGenre(isActive ? "" : g)}
-              aria-pressed={mode === "anime" ? isActive : undefined}
-              style={{
-                padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: isActive ? 600 : 500,
-                background: isActive ? "var(--accent-soft)" : "var(--surf)",
-                color: isActive ? "var(--text)" : "var(--muted)",
-                border: `1px solid ${isActive ? "var(--accent)" : "var(--line-2)"}`, cursor: "pointer",
-                transition: "border-color 150ms, color 150ms",
-              }}
-              onMouseEnter={(e) => {
-                const b = e.currentTarget as HTMLButtonElement;
-                b.style.borderColor = "var(--accent)";
-                b.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                if (isActive) return;
-                const b = e.currentTarget as HTMLButtonElement;
-                b.style.borderColor = "var(--line-2)";
-                b.style.color = "var(--muted)";
-              }}
-            >
-              {g}
-            </button>
-            );
-          })}
+      <section aria-labelledby="genres-heading" style={{ marginBottom: isMobile ? 32 : 44 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 16 }}>
+          <SectionTitle id="genres-heading">Genres</SectionTitle>
+          {!isMobile && (
+            <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--dim)" }}>
+              {mode === "tv" ? "Opens the genre" : "Pick one to filter — combines with search & type"}
+            </span>
+          )}
         </div>
+        <GenreTiles genres={browseGenres} activeGenre={genre} onSelect={handleGenreSelect} artFor={artFor} />
+      </section>
+
+      {/* Full-height while filtering so the scroll to results lands before the first page arrives. */}
+      <div ref={resultsRef} style={{ scrollMarginTop: 90, minHeight: search.isActive ? "100vh" : undefined }}>
+        {search.isActive ? (
+          <section aria-labelledby="results-heading">
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+              <SectionTitle id="results-heading">{genre || "Results"}</SectionTitle>
+              {query && <Pill label={`"${query}"`} onRemove={() => setQuery("")} />}
+              {format && <Pill label={formatLabel ?? format} onRemove={() => setFormat("")} />}
+              {audio && <Pill label={audio.toUpperCase()} onRemove={() => setAudio("")} />}
+              {genre && <Pill label={genre} onRemove={() => setGenre("")} />}
+              <button onClick={clearAll} style={{ minHeight: 32, padding: "0 6px", fontSize: 12, color: "var(--dim)" }}>
+                Clear all
+              </button>
+            </div>
+            <PagedResults search={search} />
+          </section>
+        ) : (
+          <>
+            <section aria-labelledby="trending-heading" style={{ marginBottom: isMobile ? 32 : 52 }}>
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+                <SectionTitle id="trending-heading">{row1Label}</SectionTitle>
+                <Link to={row1Path} className="mono" style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "var(--accent-hi)" }}>
+                  SEE ALL →
+                </Link>
+              </div>
+              <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: "24px 16px", justifyContent: "space-between" }}>
+                {row1Loading
+                  ? Array.from({ length: TRENDING_GRID_COUNT }).map((_, i) => <CardSkeleton key={i} />)
+                  : row1.slice(0, TRENDING_GRID_COUNT).map((m) => <Card key={m.id} media={m} />)}
+              </div>
+            </section>
+            <div style={{ margin: `0 -${pad}px` }}>
+              <Row title={row2Label} items={row2} loading={row2Loading} seeAllTo={row2Path} />
+            </div>
+          </>
+        )}
       </div>
-
-      {search.isActive ? (
-        <div style={{ padding: isMobile ? "0 16px" : "0 32px" }}>
-          <PagedResults search={search} />
-        </div>
-      ) : (
-        <>
-          <Row title={row1Label} items={row1} loading={row1Loading} ranked seeAllTo={row1Path} />
-          <Row title={row2Label} items={row2} loading={row2Loading} seeAllTo={row2Path} />
-        </>
-      )}
     </div>
+  );
+}
+
+function SectionTitle({ id, children }: { id: string; children: React.ReactNode }) {
+  return (
+    <h2 id={id} style={{
+      margin: 0, paddingLeft: 12, borderLeft: "4px solid var(--accent)",
+      fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1,
+    }}>
+      {children}
+    </h2>
   );
 }
 
