@@ -1,19 +1,39 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Play, Plus, Check, ChevronLeft, Star, Eye, EyeOff, Heart, ExternalLink } from "lucide-react";
+import { Play, Plus, Check, ChevronLeft, Star, Eye, EyeOff, Heart } from "lucide-react";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useMedia, useEpisodes } from "../hooks/useMedia";
 import { EpisodeList } from "../components/EpisodeList";
-import { CastCard } from "../components/CastCard";
 import { TrailerBackdrop } from "../components/TrailerBackdrop";
 import { Card, CardSkeleton } from "../components/Card";
 import { api } from "../lib/api";
 import type { HistoryEntry, EpisodeAvail, Media } from "../lib/types";
-import { AnimeCover } from "../lib/procedural";
+import { AnimeCover, CastPortrait, EpisodeThumbnail } from "../lib/procedural";
+import { toFormatLabel } from "../lib/utils";
 import { useLibrary } from "../context/LibraryContext";
 import { lcGet, lcSet } from "../lib/localCache";
 
-type Tab = "overview" | "episodes" | "cast";
+type Tab = "overview" | "episodes" | "cast" | "related";
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "episodes", label: "Episodes" },
+  { id: "cast", label: "Characters" },
+  { id: "related", label: "Related" },
+];
+
+const RELATION_LABELS: Record<string, string> = {
+  PREQUEL: "PREQUEL",
+  SEQUEL: "SEQUEL",
+  SIDE_STORY: "SIDE STORY",
+  SPIN_OFF: "SPIN-OFF",
+  ALTERNATIVE: "ALT VERSION",
+};
+
+const UP_NEXT_COUNT = 3;
+const CAST_PREVIEW_COUNT = 8;
+// Roughly four lines at the column width; shorter synopses never get a "Read more".
+const SYNOPSIS_CLAMP_CHARS = 420;
 
 export function Detail() {
   const { id } = useParams<{ id: string }>();
@@ -44,6 +64,7 @@ export function Detail() {
   const [showFavSeriesModal, setShowFavSeriesModal] = useState(false);
   const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
   const [selectedRange, setSelectedRange] = useState(0);
+  const [isSynopsisOpen, setIsSynopsisOpen] = useState(false);
 
   const { watchedIds } = useLibrary();
   const decodedId = id ? decodeURIComponent(id) : "";
@@ -230,8 +251,23 @@ export function Detail() {
     );
   }
 
+  const bannerHeight = isMobile ? 300 : 520;
+  const hasProgress = Object.keys(progressMap).length > 0;
+  const startEpisode = getStartEpisode();
+  const hasSub = Object.values(availabilityMap).some((a) => a.hasSub);
+  const hasDub = Object.values(availabilityMap).some((a) => a.hasDub);
+  const startIndex = Math.max(episodes.findIndex((e) => e.number === startEpisode), 0);
+  const upNext = episodes.slice(startIndex, startIndex + UP_NEXT_COUNT);
+  const unwatchedSimilar = similar.filter((m) => !watchedIds.has(m.id));
+  const byYear = (a: { media: Media }, b: { media: Media }) => (a.media.year ?? 9999) - (b.media.year ?? 9999);
+  const seasonChain = [
+    ...relations.filter((r) => r.relationType === "PREQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
+    { relationType: "CURRENT", media, isCurrent: true },
+    ...relations.filter((r) => r.relationType === "SEQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
+  ];
+
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+    <div style={{ position: "relative", minHeight: "100vh", background: "var(--bg)" }}>
       {showFavSeriesModal && (
         <div
           role="dialog"
@@ -334,151 +370,89 @@ export function Detail() {
           </div>
         </div>
       )}
-      {/* Sticky back bar */}
-      <div style={{
-        position: "sticky", top: 0, zIndex: 60,
-        background: "rgba(10,10,10,0.7)",
-        backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
+      {/* Faint banner (and trailer, after a few seconds) behind the header area */}
+      <div aria-hidden="true" style={{
+        position: "absolute", top: 0, left: 0, right: 0, height: bannerHeight,
+        opacity: 0.35, overflow: "hidden", pointerEvents: "none",
       }}>
-        <div style={{ maxWidth: 1600, margin: "0 auto", padding: isMobile ? "12px 16px" : "12px 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <button onClick={() => navigate(-1)} style={{
-            display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-            borderRadius: 6, border: "1px solid var(--line)", background: "var(--surf)", fontSize: 13, color: "var(--muted)",
-          }}>
-            <ChevronLeft size={14} /> Library
-          </button>
-        </div>
+        <TrailerBackdrop
+          banner={media.banner ?? media.poster}
+          trailer={media.trailer}
+          title={media.title}
+          height={bannerHeight}
+          overrideSrc={(tab === "episodes" && hoveredEpThumb) ? hoveredEpThumb : undefined}
+        />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, var(--bg) 5%, transparent 70%)" }} />
       </div>
 
-      {/* Backdrop */}
-      <TrailerBackdrop
-        banner={media.banner}
-        trailer={media.trailer}
-        title={media.title}
-        height={isMobile ? 240 : 420}
-        overrideSrc={(tab === "episodes" && hoveredEpThumb) ? hoveredEpThumb : undefined}
-      />
-
-      {/* Main content */}
-      <div style={{ position: "relative", zIndex: 10, maxWidth: 1600, margin: isMobile ? "-60px auto 0" : "-180px auto 0", padding: isMobile ? "0 16px 64px" : "0 32px 64px" }}>
-        {/* Poster + meta row */}
-        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 16 : 32, marginBottom: 32, alignItems: isMobile ? "flex-start" : "flex-end" }}>
-          {/* Poster */}
-          <div style={{ flexShrink: 0, width: isMobile ? 110 : 180, height: isMobile ? 160 : 260, borderRadius: 8, overflow: "hidden", border: "1px solid var(--line-2)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
-            {media.poster ? (
-              <img src={media.poster} alt={media.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            ) : (
-              <AnimeCover title={media.title} w={isMobile ? 110 : 180} h={isMobile ? 160 : 260} />
-            )}
+      <div className="detail-layout">
+        {/* Left column: poster, actions, facts */}
+        <aside className="detail-aside" aria-label="Actions and details">
+          <div style={{
+            width: "100%", aspectRatio: "300 / 430", borderRadius: 12, overflow: "hidden",
+            border: "1px solid var(--glass-line)", boxShadow: "0 24px 60px var(--glass-strong)",
+          }}>
+            {media.poster
+              ? <img src={media.poster} alt={media.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              : <AnimeCover title={media.title} w={300} h={430} />}
           </div>
 
-          {/* Meta */}
-          <div style={{ paddingBottom: 4, flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-              {media.genres.slice(0, 5).map((g) => (
-                <span key={g} className="mono" style={{
-                  fontSize: 10, padding: "3px 8px", borderRadius: 999, letterSpacing: 1,
-                  border: "1px solid rgba(255,255,255,0.18)", color: "#d4d4d4",
-                }}>{g.toUpperCase()}</span>
-              ))}
-            </div>
-            <h1 style={{ margin: "0 0 6px", fontSize: isMobile ? 24 : 40, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.1 }}>{media.title}</h1>
-            {media.altTitles?.[0] && (
-              <p className="mono" style={{ margin: "0 0 12px", color: "var(--dim)", fontSize: 11, letterSpacing: 1 }}>{media.altTitles[0].toUpperCase()}</p>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
-              {media.year && <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>{media.year}</span>}
-              {media.rating && <span style={{ color: "var(--rating)", fontWeight: 600, fontSize: 13 }}>★ {media.rating.toFixed(1)}</span>}
-              {media.totalEpisodes && <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>{media.totalEpisodes}EP</span>}
-              {media.status && <span className="mono" style={{ fontSize: 12, color: "var(--muted)", textTransform: "uppercase" }}>{media.status}</span>}
-              {Object.values(availabilityMap).some((a) => a.hasSub) && (
-                <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, background: "var(--sub-badge-soft)", color: "var(--sub-badge-text)", border: "1px solid var(--sub-badge-border)", fontWeight: 700, letterSpacing: 1 }}>SUB</span>
-              )}
-              {Object.values(availabilityMap).some((a) => a.hasDub) && (
-                <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, background: "var(--dub-badge-soft)", color: "var(--dub-badge-text)", border: "1px solid var(--dub-badge-border)", fontWeight: 700, letterSpacing: 1 }}>DUB</span>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+            <button
+              data-tv-autofocus
+              className="btn-slant btn-slant--primary"
+              onClick={() => navigate(`/watch/${encodeURIComponent(media.id)}/${startEpisode}`)}
+              style={{ justifyContent: "center", width: "100%" }}
+            >
+              <Play size={14} fill="currentColor" /> {hasProgress ? `Resume EP ${startEpisode}` : "Watch now"}
+            </button>
+            <button
+              className="btn-slant btn-slant--ghost"
+              onClick={toggleFavorite}
+              disabled={toggling}
+              aria-pressed={favorited}
+              style={{ justifyContent: "center", width: "100%", color: favorited ? "var(--accent-hi)" : undefined }}
+            >
+              {favorited ? <Check size={15} /> : <Plus size={15} />} {favorited ? "In To Watch" : "To Watch"}
+            </button>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 4 }}>
               <button
-                data-tv-autofocus
-                onClick={() => navigate(`/watch/${encodeURIComponent(media.id)}/${getStartEpisode()}`)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 22px",
-                  borderRadius: 6, fontWeight: 700, fontSize: 14, background: "#fff", color: "#0a0a0a", border: "none", cursor: "pointer",
-                }}
-              >
-                <Play size={14} fill="#0a0a0a" color="#0a0a0a" /> Play
-              </button>
-              <button
-                onClick={toggleFavorite}
-                disabled={toggling}
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 16px",
-                  borderRadius: 6, fontWeight: 600, fontSize: 14,
-                  background: favorited ? "var(--accent-soft)" : "rgba(255,255,255,0.06)",
-                  color: favorited ? "var(--accent)" : "#fff",
-                  border: `1px solid ${favorited ? "var(--accent)" : "rgba(255,255,255,0.18)"}`,
-                }}
-              >
-                {favorited ? <Check size={14} /> : <Plus size={14} />}
-                {favorited ? "In To Watch" : "To Watch"}
-              </button>
-              <button
+                className="action-tile"
                 onClick={toggleFavSeries}
-                title={isFavSeries ? "Remove from favorite series" : "Add to favorite series (max 10)"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 16px",
-                  borderRadius: 6, fontWeight: 600, fontSize: 14,
-                  background: isFavSeries ? "var(--fav-soft)" : "rgba(255,255,255,0.06)",
-                  color: isFavSeries ? "var(--fav-text)" : "#fff",
-                  border: `1px solid ${isFavSeries ? "var(--fav-border)" : "rgba(255,255,255,0.18)"}`,
-                  cursor: "pointer",
-                }}
+                aria-pressed={isFavSeries}
+                title={isFavSeries ? "Remove from favourite series" : "Add to favourite series (max 10)"}
+                style={isFavSeries ? { color: "var(--fav-text)", borderColor: "var(--fav-border)", background: "var(--fav-soft)" } : undefined}
               >
-                <Heart size={14} fill={isFavSeries ? "currentColor" : "none"} />
-                {isFavSeries ? "Favourite" : "Add Favourite"}
+                <Heart size={17} fill={isFavSeries ? "currentColor" : "none"} /> Favourite
               </button>
               <button
+                className="action-tile"
                 onClick={toggleManuallyWatched}
                 disabled={togglingWatched}
+                aria-pressed={isWatched}
                 title={isManuallyWatched ? "Remove from watched" : "Mark as watched"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 16px",
-                  borderRadius: 6, fontWeight: 600, fontSize: 14,
-                  background: isWatched ? "var(--seen-soft)" : "rgba(255,255,255,0.06)",
-                  color: isWatched ? "var(--seen-text)" : "#fff",
-                  border: `1px solid ${isWatched ? "var(--seen-border)" : "rgba(255,255,255,0.18)"}`,
-                  cursor: togglingWatched ? "wait" : "pointer",
-                }}
+                style={isWatched ? { color: "var(--seen-text)", borderColor: "var(--seen-border)", background: "var(--seen-soft)" } : undefined}
               >
-                {isWatched ? <EyeOff size={14} /> : <Eye size={14} />}
-                {isWatched ? "Watched" : "Mark Watched"}
+                {isWatched ? <EyeOff size={17} /> : <Eye size={17} />} Watched
               </button>
-              <div ref={ratingPickerRef} style={{ position: "relative" }}>
+              <div ref={ratingPickerRef} style={{ position: "relative", display: "flex" }}>
                 <button
+                  className="action-tile"
                   onClick={() => setShowRatingPicker((p) => !p)}
-                  aria-label={likeRating ? `Liked: ${likeRating}/5` : "Like this anime"}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 7, padding: "12px 16px",
-                    borderRadius: 6, fontWeight: 600, fontSize: 14,
-                    background: likeRating != null ? "rgba(251,191,36,0.12)" : "rgba(255,255,255,0.06)",
-                    color: likeRating != null ? "var(--rating)" : "#fff",
-                    border: `1px solid ${likeRating != null ? "var(--rating)" : "rgba(255,255,255,0.18)"}`,
-                  }}
+                  aria-expanded={showRatingPicker}
+                  aria-label={likeRating ? `Your rating: ${likeRating} of 5` : "Rate this anime"}
+                  style={{ flex: 1, ...(likeRating != null ? { color: "var(--rating)", borderColor: "var(--rating)" } : {}) }}
                 >
-                  <Star size={14} fill={likeRating != null ? "var(--rating)" : "none"} color={likeRating != null ? "var(--rating)" : "currentColor"} />
-                  {likeRating != null ? `${likeRating}/5` : "Like"}
+                  <Star size={17} fill={likeRating != null ? "currentColor" : "none"} /> {likeRating != null ? `${likeRating}/5` : "Rate"}
                 </button>
                 {showRatingPicker && (
-                  <div
-                    style={{
-                      position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 50,
-                      background: "var(--surf-2)", border: "1px solid var(--line-2)", borderRadius: 8,
-                      padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10,
-                      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-                    }}
-                  >
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 50,
+                    background: "var(--surf-2)", border: "1px solid var(--line-2)", borderRadius: 8,
+                    padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10,
+                    boxShadow: "0 8px 32px var(--glass-strong)",
+                  }}>
                     <p className="mono" style={{ margin: 0, fontSize: 10, color: "var(--dim)", letterSpacing: 1 }}>RATE THIS ANIME</p>
                     <div style={{ display: "flex", gap: 4 }}>
                       {[1, 2, 3, 4, 5].map((star) => (
@@ -499,11 +473,7 @@ export function Detail() {
                       ))}
                     </div>
                     {likeRating != null && (
-                      <button
-                        onClick={handleUnlike}
-                        className="mono"
-                        style={{ fontSize: 10, color: "var(--dim)", letterSpacing: 0.5, textAlign: "left" }}
-                      >
+                      <button onClick={handleUnlike} className="mono" style={{ fontSize: 10, color: "var(--dim)", letterSpacing: 0.5, textAlign: "left" }}>
                         REMOVE RATING
                       </button>
                     )}
@@ -512,302 +482,434 @@ export function Detail() {
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Tabs */}
-        <div role="tablist" style={{ borderBottom: "1px solid var(--line)", marginBottom: 24, display: "flex", gap: 0 }}>
-          {(["overview", "episodes", "cast"] as Tab[])
-          .map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              id={`tab-${t}`}
-              aria-controls={`panel-${t}`}
-              onClick={() => setTab(t)}
-              style={{
-                padding: "12px 20px", fontSize: 13, fontWeight: 600, textTransform: "capitalize",
-                color: tab === t ? "#fff" : "var(--muted)",
-                borderBottom: tab === t ? "2px solid var(--accent)" : "2px solid transparent",
-                marginBottom: -1, transition: "color 160ms",
-              }}
-            >{t}</button>
-          ))}
-        </div>
+        </aside>
 
-        {/* Tab content */}
-        <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-          {tab === "overview" ? (
-            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 24 : 48, alignItems: "flex-start" }}>
-              <p style={{ flex: 1, margin: 0, color: "var(--muted)", fontSize: isMobile ? 14 : 15, lineHeight: 1.65, whiteSpace: "pre-line" }}>
-                {media.synopsis || "No synopsis available."}
-              </p>
-              <AnimeInfoPanel media={media} fullWidth={isMobile} />
-            </div>
-          ) : (
-            <div style={{ maxWidth: 900 }}>
-              {tab === "episodes" && (() => {
-                // Compute unique season numbers for the dropdown
-                const seasons = [...new Set(
-                  episodes.map((e) => e.seasonNumber).filter((s): s is number => s != null)
-                )].sort((a, b) => a - b);
-                const hasSeasons = seasons.length > 1;
+        {/* Right column: title, synopsis, tabs */}
+        <main className="detail-main" style={{ minWidth: 0 }}>
+          <button onClick={() => navigate(-1)} style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 36, fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+            <ChevronLeft size={15} /> Back
+          </button>
 
-                // Episodes to show after season filter
-                const seasonFiltered = selectedSeason != null
-                  ? episodes.filter((e) => e.seasonNumber === selectedSeason)
-                  : episodes;
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {media.rating && <HeaderChip tone="rating">★ {media.rating.toFixed(1)}</HeaderChip>}
+            {toFormatLabel(media) && <HeaderChip>{toFormatLabel(media)}</HeaderChip>}
+            {media.year && <HeaderChip>{media.year}</HeaderChip>}
+            {media.genres.slice(0, 4).map((g) => <HeaderChip key={g}>{g}</HeaderChip>)}
+            {hasSub && <HeaderChip tone="sub">SUB</HeaderChip>}
+            {hasDub && <HeaderChip tone="dub">DUB</HeaderChip>}
+          </div>
 
-                // Chunk into groups of 100 when list is long
-                const RANGE_SIZE = 100;
-                const ranges: { label: string; episodes: typeof seasonFiltered }[] = [];
-                if (seasonFiltered.length > RANGE_SIZE) {
-                  for (let i = 0; i < seasonFiltered.length; i += RANGE_SIZE) {
-                    const chunk = seasonFiltered.slice(i, i + RANGE_SIZE);
-                    const first = chunk[0].number;
-                    const last = chunk[chunk.length - 1].number;
-                    ranges.push({ label: `${first}–${last}`, episodes: chunk });
-                  }
-                }
-                const clampedRange = Math.min(selectedRange, Math.max(0, ranges.length - 1));
-                const visibleEpisodes = ranges.length > 0 ? ranges[clampedRange].episodes : seasonFiltered;
-
-                return epsLoading ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} style={{ height: 80, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
-                    ))}
-                  </div>
-                ) : (
-                  <>
-                    {(hasSeasons || ranges.length > 0) && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-                        {hasSeasons && (
-                          <>
-                            <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>Season</span>
-                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <button
-                                onClick={() => { setSelectedSeason(null); setSelectedRange(0); }}
-                                style={{
-                                  padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                                  background: selectedSeason === null ? "var(--accent)" : "var(--surf-2)",
-                                  color: selectedSeason === null ? "#fff" : "var(--muted)",
-                                  border: `1px solid ${selectedSeason === null ? "var(--accent)" : "var(--line-2)"}`,
-                                  transition: "all 150ms",
-                                }}
-                              >
-                                All
-                              </button>
-                              {seasons.map((s) => (
-                                <button
-                                  key={s}
-                                  onClick={() => { setSelectedSeason(s); setSelectedRange(0); }}
-                                  style={{
-                                    padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                                    background: selectedSeason === s ? "var(--accent)" : "var(--surf-2)",
-                                    color: selectedSeason === s ? "#fff" : "var(--muted)",
-                                    border: `1px solid ${selectedSeason === s ? "var(--accent)" : "var(--line-2)"}`,
-                                    transition: "all 150ms",
-                                  }}
-                                >
-                                  {s}
-                                </button>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                        {ranges.length > 0 && (
-                          <>
-                            {hasSeasons && <span style={{ color: "var(--line-2)" }}>·</span>}
-                            <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>Episodes</span>
-                            <select
-                              value={clampedRange}
-                              onChange={(e) => setSelectedRange(Number(e.target.value))}
-                              style={{
-                                padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                background: "var(--surf-2)", color: "var(--muted)",
-                                border: "1px solid var(--line-2)", cursor: "pointer",
-                              }}
-                            >
-                              {ranges.map((r, i) => (
-                                <option key={i} value={i}>{r.label}</option>
-                              ))}
-                            </select>
-                          </>
-                        )}
-                        <span className="mono" style={{ fontSize: 10, color: "var(--dim)", marginLeft: "auto" }}>
-                          {seasonFiltered.length} episodes
-                        </span>
-                      </div>
-                    )}
-                    <EpisodeList
-                      mediaId={media.id}
-                      mediaTitle={media.title}
-                      episodes={visibleEpisodes}
-                      progressMap={progressMap}
-                      availabilityMap={availabilityMap}
-                      onEpisodeHover={setHoveredEpThumb}
-                      onToggleWatched={handleToggleWatched}
-                      hideSeasonsHeaders={selectedSeason !== null}
-                    />
-                  </>
-                );
-              })()}
-
-              {tab === "cast" && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
-                  {media.cast.length === 0
-                    ? <p className="mono" style={{ color: "var(--dim)", fontSize: 12 }}>NO CAST DATA</p>
-                    : media.cast.map((c) => <CastCard key={c.name} member={c} />)
-                  }
-                </div>
-              )}
-            </div>
+          <h1 style={{
+            margin: "14px 0 8px", fontSize: isMobile ? 30 : 56, fontWeight: 900, lineHeight: 0.95,
+            letterSpacing: isMobile ? "-0.02em" : "-0.04em", textTransform: "uppercase",
+          }}>
+            {media.title}
+          </h1>
+          {media.altTitles?.[0] && (
+            <p className="mono" style={{ margin: "0 0 16px", color: "var(--dim)", fontSize: 11, letterSpacing: 1 }}>{media.altTitles[0].toUpperCase()}</p>
           )}
-        </div>
 
-        {tab === "overview" && relations.length > 0 && (() => {
-          const seasons = relations.filter((r) => r.relationType === "PREQUEL" || r.relationType === "SEQUEL");
-          const related = relations.filter((r) => r.relationType === "SIDE_STORY" || r.relationType === "SPIN_OFF" || r.relationType === "ALTERNATIVE");
-          const RELATION_LABELS: Record<string, string> = {
-            PREQUEL: "PREQUEL",
-            SEQUEL: "SEQUEL",
-            SIDE_STORY: "SIDE STORY",
-            SPIN_OFF: "SPIN-OFF",
-            ALTERNATIVE: "ALT VERSION",
-          };
-          const renderRow = (items: typeof relations, heading: string) => items.length === 0 ? null : (
-            <div style={{ marginTop: 48 }}>
-              <p className="mono" style={{ margin: "0 0 16px", fontSize: 11, color: "var(--dim)", letterSpacing: 1 }}>
-                {heading}
-              </p>
-              <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8, scrollbarWidth: "none" }}>
-                {items.map(({ relationType, media: m }) => (
-                  <div key={m.id} style={{ position: "relative", flexShrink: 0 }}>
-                    <Card media={m} width={148} />
-                    <div className="mono" style={{
-                      marginTop: 4, fontSize: 9, color: "var(--accent)", letterSpacing: 0.5, textAlign: "center",
-                    }}>
-                      {RELATION_LABELS[relationType] ?? relationType}
+          <p className={isSynopsisOpen ? undefined : "clip-4"} style={{ margin: 0, maxWidth: 860, color: "var(--hero-text)", fontSize: isMobile ? 14 : 15, lineHeight: 1.65, whiteSpace: "pre-line" }}>
+            {media.synopsis || "No synopsis available."}
+          </p>
+          {media.synopsis.length > SYNOPSIS_CLAMP_CHARS && (
+            <button onClick={() => setIsSynopsisOpen((o) => !o)} style={{ minHeight: 36, fontSize: 13, fontWeight: 700, color: "var(--accent-hi)" }}>
+              {isSynopsisOpen ? "Show less" : "Read more"}
+            </button>
+          )}
+
+          <div role="tablist" aria-label="Sections" style={{ display: "flex", gap: 10, flexWrap: "wrap", margin: "24px 0 26px" }}>
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                id={`tab-${t.id}`}
+                aria-selected={tab === t.id}
+                aria-controls={`panel-${t.id}`}
+                className="tab-slant"
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}{t.id === "episodes" && episodes.length > 0 ? ` · ${episodes.length}` : ""}
+              </button>
+            ))}
+          </div>
+
+          <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+            {tab === "overview" && (
+              <>
+                {upNext.length > 0 && (
+                  <section style={{ marginBottom: 36 }}>
+                    <h2 className="section-title">Up next</h2>
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 220 : 240}px, 1fr))`, gap: 14 }}>
+                      {upNext.map((ep, i) => {
+                        const prog = progressMap[ep.number];
+                        const pct = prog?.duration ? Math.min(prog.progress / prog.duration, 1) * 100 : 0;
+                        const isCurrent = i === 0 && hasProgress;
+                        return (
+                          <button
+                            key={ep.number}
+                            className="upnext-card"
+                            onClick={() => navigate(`/watch/${encodeURIComponent(media.id)}/${ep.number}`)}
+                            style={{
+                              textAlign: "left", borderRadius: 10, overflow: "hidden", background: "var(--surf)",
+                              border: `1px solid ${isCurrent ? "var(--accent)" : "var(--line)"}`,
+                            }}
+                          >
+                            <div style={{ position: "relative", aspectRatio: "16 / 9" }}>
+                              {ep.thumbnail
+                                ? <img src={ep.thumbnail} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                                : <EpisodeThumbnail title={media.title} epNum={ep.number} />}
+                            </div>
+                            {pct > 0 && (
+                              <div style={{ height: 3, background: "var(--line-2)" }}>
+                                <div style={{ height: "100%", width: `${pct}%`, background: "var(--accent)" }} />
+                              </div>
+                            )}
+                            <div style={{ padding: "10px 12px" }}>
+                              <span style={{ display: "block", fontSize: 10.5, fontWeight: 800, letterSpacing: 1, color: isCurrent ? "var(--accent-hi)" : "var(--dim)" }}>
+                                {isCurrent ? "CONTINUE · " : ""}EPISODE {ep.episodeInSeason ?? ep.number}
+                              </span>
+                              <span className="clip-1" style={{ marginTop: 4, fontSize: 13.5, fontWeight: 700 }}>{ep.title}</span>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-          return (
-            <>
-              {renderRow(seasons, "OTHER SEASONS")}
-              {renderRow(related, "RELATED")}
-            </>
-          );
-        })()}
+                  </section>
+                )}
 
-        {tab === "overview" && (() => {
-          const filteredSimilar = similar.filter((m) => !watchedIds.has(m.id));
-          return (similarLoading || filteredSimilar.length > 0) && (
-            <div style={{ marginTop: 48 }}>
-              <p className="mono" style={{ margin: "0 0 16px", fontSize: 11, color: "var(--dim)", letterSpacing: 1 }}>
-                SIMILAR SERIES
-              </p>
-              <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 8, scrollbarWidth: "none" }}>
-                {similarLoading
-                  ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} width={148} />)
-                  : filteredSimilar.map((m) => <Card key={m.id} media={m} width={148} />)
+                {seasonChain.length > 1 && (
+                  <section style={{ marginBottom: 36 }}>
+                    <h2 className="section-title">Seasons</h2>
+                    <div style={{ display: "flex", alignItems: "center", gap: 0, overflowX: "auto", paddingBottom: 6 }}>
+                      {seasonChain.map((s, i) => (
+                        <React.Fragment key={s.media.id}>
+                          {i > 0 && <span aria-hidden="true" style={{ width: 32, height: 2, flexShrink: 0, background: "var(--line-2)" }} />}
+                          <SeasonNode
+                            media={s.media}
+                            label={s.isCurrent ? "YOU'RE HERE" : (RELATION_LABELS[s.relationType] ?? s.relationType)}
+                            isCurrent={s.isCurrent}
+                            onOpen={() => navigate(`/title/${encodeURIComponent(s.media.id)}`)}
+                          />
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {media.cast.length > 0 && (
+                  <section style={{ marginBottom: 36 }}>
+                    <div style={{ display: "flex", alignItems: "baseline" }}>
+                      <h2 className="section-title">Characters</h2>
+                      {media.cast.length > CAST_PREVIEW_COUNT && (
+                        <button onClick={() => setTab("cast")} className="mono" style={{ marginLeft: "auto", minHeight: 32, fontSize: 11, fontWeight: 700, letterSpacing: 1, color: "var(--accent-hi)" }}>
+                          ALL {media.cast.length} →
+                        </button>
+                      )}
+                    </div>
+                    <CharacterGrid cast={media.cast.slice(0, CAST_PREVIEW_COUNT)} />
+                  </section>
+                )}
+
+                <SimilarRow items={unwatchedSimilar} loading={similarLoading} />
+              </>
+            )}
+
+            {tab === "episodes" && (() => {
+              // Compute unique season numbers for the dropdown
+              const seasons = [...new Set(
+                episodes.map((e) => e.seasonNumber).filter((s): s is number => s != null)
+              )].sort((a, b) => a - b);
+              const hasSeasons = seasons.length > 1;
+
+              // Episodes to show after season filter
+              const seasonFiltered = selectedSeason != null
+                ? episodes.filter((e) => e.seasonNumber === selectedSeason)
+                : episodes;
+
+              // Chunk into groups of 100 when list is long
+              const RANGE_SIZE = 100;
+              const ranges: { label: string; episodes: typeof seasonFiltered }[] = [];
+              if (seasonFiltered.length > RANGE_SIZE) {
+                for (let i = 0; i < seasonFiltered.length; i += RANGE_SIZE) {
+                  const chunk = seasonFiltered.slice(i, i + RANGE_SIZE);
+                  const first = chunk[0].number;
+                  const last = chunk[chunk.length - 1].number;
+                  ranges.push({ label: `${first}–${last}`, episodes: chunk });
                 }
-              </div>
-            </div>
-          );
-        })()}
+              }
+              const clampedRange = Math.min(selectedRange, Math.max(0, ranges.length - 1));
+              const visibleEpisodes = ranges.length > 0 ? ranges[clampedRange].episodes : seasonFiltered;
+
+              return epsLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} style={{ height: 80, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  {(hasSeasons || ranges.length > 0) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+                      {hasSeasons && (
+                        <>
+                          <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>Season</span>
+                          <div role="group" aria-label="Season" className="seg-group">
+                            <button className="seg-btn" aria-pressed={selectedSeason === null} onClick={() => { setSelectedSeason(null); setSelectedRange(0); }}>
+                              All
+                            </button>
+                            {seasons.map((s) => (
+                              <button key={s} className="seg-btn" aria-pressed={selectedSeason === s} onClick={() => { setSelectedSeason(s); setSelectedRange(0); }}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      {ranges.length > 0 && (
+                        <>
+                          <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>Episodes</span>
+                          <select
+                            value={clampedRange}
+                            onChange={(e) => setSelectedRange(Number(e.target.value))}
+                            aria-label="Episode range"
+                            style={{
+                              minHeight: 40, padding: "0 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                              background: "var(--surf-2)", color: "var(--muted)",
+                              border: "1px solid var(--line-2)", cursor: "pointer",
+                            }}
+                          >
+                            {ranges.map((r, i) => (
+                              <option key={i} value={i}>{r.label}</option>
+                            ))}
+                          </select>
+                        </>
+                      )}
+                      <span className="mono" style={{ fontSize: 10, color: "var(--dim)", marginLeft: "auto" }}>
+                        {watchedEpCount} / {seasonFiltered.length} WATCHED
+                      </span>
+                    </div>
+                  )}
+                  <EpisodeList
+                    mediaId={media.id}
+                    mediaTitle={media.title}
+                    episodes={visibleEpisodes}
+                    currentEpisode={hasProgress ? startEpisode : undefined}
+                    progressMap={progressMap}
+                    availabilityMap={availabilityMap}
+                    onEpisodeHover={setHoveredEpThumb}
+                    onToggleWatched={handleToggleWatched}
+                    hideSeasonsHeaders={selectedSeason !== null}
+                  />
+                </>
+              );
+            })()}
+
+            {tab === "cast" && (
+              media.cast.length === 0
+                ? <p className="mono" style={{ color: "var(--dim)", fontSize: 12 }}>NO CHARACTER DATA</p>
+                : <CharacterGrid cast={media.cast} />
+            )}
+
+            {tab === "related" && (
+              <>
+                {relations.length === 0 && !similarLoading && unwatchedSimilar.length === 0 && (
+                  <p className="mono" style={{ color: "var(--dim)", fontSize: 12 }}>NOTHING RELATED FOUND</p>
+                )}
+                <RelationRow heading="Other seasons" items={relations.filter((r) => r.relationType === "PREQUEL" || r.relationType === "SEQUEL")} />
+                <RelationRow heading="Side stories & spin-offs" items={relations.filter((r) => r.relationType === "SIDE_STORY" || r.relationType === "SPIN_OFF" || r.relationType === "ALTERNATIVE")} />
+                <SimilarRow items={unwatchedSimilar} loading={similarLoading} />
+              </>
+            )}
+          </div>
+        </main>
+
+        {/* Under the poster on desktop; after the content on phones, so the title comes first */}
+        <div className="detail-extra">
+          <AnimeInfoPanel media={media} />
+        </div>
       </div>
     </div>
   );
 }
 
-function AnimeInfoPanel({ media, fullWidth }: { media: Media; fullWidth?: boolean }) {
-  type Row = { label: string; content: React.ReactNode };
-  const rows: Row[] = [];
-
-  if (media.country) rows.push({ label: "Country", content: media.country });
-  if (media.genres.length) rows.push({ label: "Genres", content: media.genres.join(", ") });
-  if (media.premiered) rows.push({ label: "Premiered", content: media.premiered });
-
-  const airedFrom = media.airedFrom;
-  const airedTo = media.airedTo;
-  if (airedFrom) rows.push({ label: "Date aired", content: airedTo ? `${airedFrom} to ${airedTo}` : airedFrom });
-
-  if (media.broadcast) rows.push({ label: "Broadcast", content: media.broadcast });
-  if (media.totalEpisodes) rows.push({ label: "Episodes", content: media.totalEpisodes });
-  if (media.duration) rows.push({ label: "Duration", content: `${media.duration} min` });
-
-  if (media.status) {
-    const formatted = media.status.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
-    rows.push({ label: "Status", content: formatted });
-  }
-
-  if (media.rating != null) {
-    const score = media.rating.toFixed(2);
-    rows.push({
-      label: "Score",
-      content: media.popularity ? `${score} by ${media.popularity.toLocaleString()} users` : score,
-    });
-  }
-
-  if (media.studios?.length) rows.push({ label: "Studios", content: media.studios.join(", ") });
-  if (media.producers?.length) rows.push({ label: "Producers", content: media.producers.join(", ") });
-
-  const links: React.ReactNode[] = [];
-  if (media.malId) {
-    links.push(
-      <a key="mal" href={`https://myanimelist.net/anime/${media.malId}`} target="_blank" rel="noreferrer"
-        style={{ color: "var(--accent)", textDecoration: "none" }}>MAL</a>
-    );
-  }
-  if (media.siteUrl) {
-    links.push(
-      <a key="al" href={media.siteUrl} target="_blank" rel="noreferrer"
-        style={{ color: "var(--accent)", textDecoration: "none" }}>AniList</a>
-    );
-  }
-  if (links.length) {
-    rows.push({
-      label: "Links",
-      content: links.reduce<React.ReactNode[]>((acc, l, i) => i === 0 ? [l] : [...acc, ", ", l], []),
-    });
-  }
-
-  if (rows.length === 0) return null;
-
+function HeaderChip({ tone, children }: { tone?: "rating" | "sub" | "dub"; children: React.ReactNode }) {
+  const tones = {
+    rating: { color: "var(--rating)", background: "var(--glass-light)", border: "var(--glass-line)" },
+    sub: { color: "var(--sub-badge-text)", background: "var(--sub-badge-soft)", border: "var(--sub-badge-border)" },
+    dub: { color: "var(--dub-badge-text)", background: "var(--dub-badge-soft)", border: "var(--dub-badge-border)" },
+  };
+  const t = tone ? tones[tone] : { color: "var(--text)", background: "var(--glass-light)", border: "var(--glass-line)" };
   return (
-    <div style={{ flexShrink: 0, width: fullWidth ? "100%" : 240, display: "flex", flexDirection: "column", gap: 14 }}>
-      {rows.map(({ label, content }) => (
-        <div key={label}>
-          <p className="mono" style={{ margin: "0 0 3px", fontSize: 10, color: "var(--dim)", letterSpacing: 1 }}>
-            {label.toUpperCase()}
-          </p>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>{content}</p>
+    <span style={{ fontSize: 12, fontWeight: 700, padding: "4px 10px", borderRadius: 4, color: t.color, background: t.background, border: `1px solid ${t.border}` }}>
+      {children}
+    </span>
+  );
+}
+
+function SeasonNode({ media, label, isCurrent, onOpen }: { media: Media; label: string; isCurrent: boolean; onOpen: () => void }) {
+  return (
+    <button
+      className="season-node"
+      onClick={onOpen}
+      disabled={isCurrent}
+      aria-current={isCurrent ? "page" : undefined}
+      style={{
+        display: "flex", alignItems: "center", gap: 12, flexShrink: 0, maxWidth: 280,
+        padding: "10px 14px 10px 10px", borderRadius: 10, textAlign: "left",
+        background: isCurrent ? "linear-gradient(90deg, var(--accent-soft), var(--surf))" : "var(--surf)",
+        border: `1px solid ${isCurrent ? "var(--accent)" : "var(--line)"}`,
+        cursor: isCurrent ? "default" : "pointer",
+      }}
+    >
+      <span style={{ width: 44, height: 62, borderRadius: 5, overflow: "hidden", flexShrink: 0 }}>
+        {media.poster
+          ? <img src={media.poster} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          : <AnimeCover title={media.title} w={44} h={62} />}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 9.5, fontWeight: 800, letterSpacing: 1, color: isCurrent ? "var(--accent-hi)" : "var(--dim)" }}>{label}</span>
+        <span className="clip-1" style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{media.title}</span>
+        <span style={{ display: "block", fontSize: 11, color: "var(--dim)", marginTop: 2 }}>{media.year ?? "TBA"}</span>
+      </span>
+    </button>
+  );
+}
+
+function CharacterGrid({ cast }: { cast: Media["cast"] }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 }}>
+      {cast.map((c) => (
+        <div key={c.name} className="char-card" style={{ display: "flex", borderRadius: 10, overflow: "hidden", background: "var(--surf)", border: "1px solid var(--line)" }}>
+          <span style={{ width: 64, height: 86, flexShrink: 0 }}>
+            {c.image
+              ? <img src={c.image} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              : <CastPortrait name={c.name} size={64} />}
+          </span>
+          <span style={{ padding: "12px 12px", minWidth: 0, alignSelf: "center" }}>
+            <span style={{ display: "block", fontSize: 9.5, fontWeight: 800, letterSpacing: 1, color: c.role === "Main" ? "var(--accent-hi)" : "var(--dim)" }}>
+              {c.role.toUpperCase()}
+            </span>
+            <span className="clip-2" style={{ fontSize: 13, fontWeight: 700, marginTop: 3 }}>{c.name}</span>
+          </span>
         </div>
       ))}
     </div>
   );
 }
 
-function DetailSkeleton() {
+function RelationRow({ heading, items }: { heading: string; items: { relationType: string; media: Media }[] }) {
+  if (items.length === 0) return null;
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <div style={{ height: 420, background: "var(--surf-2)", animation: "pulse 1.5s ease-in-out infinite" }} />
-      <div style={{ maxWidth: 1600, margin: "-180px auto 0", padding: "0 32px" }}>
-        <div style={{ display: "flex", gap: 32, alignItems: "flex-end", marginBottom: 40 }}>
-          <div style={{ width: 180, height: 260, borderRadius: 8, background: "var(--surf-2)", animation: "pulse 1.5s ease-in-out infinite" }} />
-          <div style={{ paddingBottom: 4 }}>
-            <div style={{ height: 40, width: 400, background: "var(--surf-2)", borderRadius: 6, marginBottom: 12, animation: "pulse 1.5s ease-in-out infinite" }} />
-            <div style={{ height: 14, width: 280, background: "var(--surf-2)", borderRadius: 4, marginBottom: 20, animation: "pulse 1.5s ease-in-out infinite" }} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <div style={{ height: 44, width: 130, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
-              <div style={{ height: 44, width: 110, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
+    <section style={{ marginBottom: 36 }}>
+      <h2 className="section-title">{heading}</h2>
+      <div className="row-scroll" style={{ paddingTop: 4 }}>
+        {items.map(({ relationType, media: m }) => (
+          <div key={m.id} style={{ flexShrink: 0 }}>
+            <Card media={m} width={148} />
+            <div className="mono" style={{ marginTop: 4, fontSize: 9, color: "var(--accent-hi)", letterSpacing: 0.5 }}>
+              {RELATION_LABELS[relationType] ?? relationType}
             </div>
           </div>
-        </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SimilarRow({ items, loading }: { items: Media[]; loading: boolean }) {
+  if (!loading && items.length === 0) return null;
+  return (
+    <section style={{ marginBottom: 36 }}>
+      <h2 className="section-title">More like this</h2>
+      <div className="row-scroll" style={{ paddingTop: 4 }}>
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} width={148} />)
+          : items.map((m) => <Card key={m.id} media={m} width={148} />)}
+      </div>
+    </section>
+  );
+}
+
+function AnimeInfoPanel({ media }: { media: Media }) {
+  type Row = { label: string; content: React.ReactNode };
+  const rows: Row[] = [];
+
+  const format = toFormatLabel(media);
+  if (format) rows.push({ label: "Type", content: media.duration ? `${format} · ${media.duration} min/ep` : format });
+  else if (media.duration) rows.push({ label: "Duration", content: `${media.duration} min` });
+  if (media.totalEpisodes) rows.push({ label: "Episodes", content: media.totalEpisodes });
+
+  if (media.status) {
+    const formatted = media.status.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+    rows.push({ label: "Status", content: formatted });
+  }
+
+  const airedFrom = media.airedFrom;
+  const airedTo = media.airedTo;
+  if (airedFrom) rows.push({ label: "Aired", content: airedTo ? `${airedFrom} → ${airedTo}` : airedFrom });
+  if (media.premiered) rows.push({ label: "Premiered", content: media.premiered });
+  if (media.broadcast) rows.push({ label: "Broadcast", content: media.broadcast });
+  if (media.country) rows.push({ label: "Country", content: media.country });
+  if (media.studios?.length) rows.push({ label: "Studios", content: media.studios.join(", ") });
+  if (media.producers?.length) rows.push({ label: "Producers", content: media.producers.join(", ") });
+
+  if (media.rating != null) {
+    rows.push({
+      label: "Score",
+      content: (
+        <>
+          <span style={{ color: "var(--rating)", fontWeight: 700 }}>{media.rating.toFixed(1)}</span>
+          {media.popularity ? <span style={{ color: "var(--dim)" }}> · {media.popularity.toLocaleString()} users</span> : null}
+          <span style={{ display: "block", height: 4, borderRadius: 2, marginTop: 6, background: "var(--line)" }}>
+            <span style={{ display: "block", height: "100%", width: `${media.rating * 10}%`, borderRadius: 2, background: "var(--rating)" }} />
+          </span>
+        </>
+      ),
+    });
+  }
+
+  const links: React.ReactNode[] = [];
+  if (media.malId) {
+    links.push(<a key="mal" href={`https://myanimelist.net/anime/${media.malId}`} target="_blank" rel="noreferrer" style={{ color: "var(--accent-hi)" }}>MAL</a>);
+  }
+  if (media.siteUrl) {
+    links.push(<a key="al" href={media.siteUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-hi)" }}>AniList</a>);
+  }
+  if (links.length) {
+    rows.push({ label: "Links", content: links.reduce<React.ReactNode[]>((acc, l, i) => i === 0 ? [l] : [...acc, " · ", l], []) });
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <dl className="panel" style={{ margin: 0, display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", gap: "10px 12px", fontSize: 13 }}>
+      {rows.map(({ label, content }) => (
+        <React.Fragment key={label}>
+          <dt style={{ color: "var(--dim)" }}>{label}</dt>
+          <dd style={{ margin: 0, color: "var(--text)", lineHeight: 1.45, overflowWrap: "anywhere" }}>{content}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function DetailSkeleton() {
+  const block = (style: React.CSSProperties) => (
+    <div style={{ background: "var(--surf-2)", animation: "pulse 1.5s ease-in-out infinite", ...style }} />
+  );
+  return (
+    <div className="detail-layout" style={{ minHeight: "100vh", background: "var(--bg)" }}>
+      <div className="detail-aside">
+        {block({ width: "100%", aspectRatio: "300 / 430", borderRadius: 12 })}
+        {block({ height: 46, borderRadius: 4 })}
+      </div>
+      <div>
+        {block({ height: 24, width: 320, borderRadius: 4, marginBottom: 18 })}
+        {block({ height: 56, width: "70%", borderRadius: 6, marginBottom: 16 })}
+        {block({ height: 90, width: "90%", borderRadius: 4, marginBottom: 26 })}
+        {block({ height: 44, width: 460, maxWidth: "100%", borderRadius: 4 })}
       </div>
     </div>
   );

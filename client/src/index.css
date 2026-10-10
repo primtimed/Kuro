@@ -436,3 +436,66 @@ a { color: inherit; text-decoration: none; }
   .genre-tile { height: 88px; }
   .genre-tile-art img { width: 48px; height: 96px; margin-left: -18px; }
 }
+
+/* ── Detail: poster column layout ──────────────────────────────────── */
+.detail-layout {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  padding: 8px 16px 64px;
+}
+.detail-aside { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 900px) {
+  .detail-layout { grid-template-columns: 300px minmax(0, 1fr); gap: 40px; padding: 24px 32px 88px; }
+  .detail-aside { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
+  .detail-layout { grid-template-rows: auto 1fr; row-gap: 16px; }
+  .detail-main { grid-column: 2; grid-row: 1 / span 2; }
+  .detail-extra { grid-column: 1; grid-row: 2; }
+}
+
+.tab-slant {
+  min-height: 44px;
+  padding: 0 24px;
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surf);
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  transition: background 150ms, color 150ms;
+}
+.tab-slant:hover { color: var(--text); background: var(--surf-2); }
+.tab-slant[aria-selected="true"] { background: var(--accent); color: var(--text); }
+.tab-slant:focus-visible { clip-path: none; }
+
+.action-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 56px;
+  border-radius: 8px;
+  background: var(--surf);
+  border: 1px solid var(--line);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted);
+  transition: background 150ms, color 150ms, border-color 150ms;
+}
+.action-tile:hover { color: var(--text); border-color: var(--line-2); }
+
+.section-title {
+  margin: 0 0 16px;
+  padding-left: 12px;
+  border-left: 4px solid var(--accent);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.upnext-card, .season-node, .char-card { transition: border-color 150ms, transform 150ms; }
+.upnext-card:hover, .season-node:hover { border-color: var(--line-2); transform: translateY(-2px); }
