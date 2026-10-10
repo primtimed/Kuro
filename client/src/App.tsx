@@ -1,5 +1,5 @@
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { AccountProvider, useAccount } from "./context/AccountContext";
 import { LibraryProvider } from "./context/LibraryContext";
 import { ServicesProvider } from "./context/ServicesContext";
@@ -38,6 +38,14 @@ function SpatialNav() {
 function HomeRoute() {
   const { mode } = useMediaMode();
   return mode === "tv" ? <TVHome /> : <Home />;
+}
+
+// Season and related links go from one title straight to another; keying by id gives each
+// title a fresh page instead of mixing the previous title's state into the new one.
+function DetailRoute() {
+  const { id } = useParams<{ id: string }>();
+  useEffect(() => { window.scrollTo(0, 0); }, [id]);
+  return <Detail key={id} />;
 }
 
 function OfflineScreen() {
@@ -80,7 +88,6 @@ function AppRoutes() {
           <SpatialNav />
           <Suspense fallback={<PageFallback />}>
           <Routes>
-            <Route path="/watch/:id/:episode" element={<Watch />} />
             <Route path="/live/:id" element={<LiveWatch />} />
             <Route path="/invite/:token" element={<Invite />} />
             <Route path="/profiles" element={<ProfileSelect />} />
@@ -93,7 +100,7 @@ function AppRoutes() {
                   <Navbar />
                   <Routes>
                     <Route path="/" element={<HomeRoute />} />
-                    <Route path="/title/:id" element={<Detail />} />
+                    <Route path="/title/:id" element={<DetailRoute />} />
                     <Route path="/search" element={<Search />} />
                     <Route path="/library" element={<Library />} />
                     <Route path="/browse" element={<Browse />} />
@@ -104,6 +111,7 @@ function AppRoutes() {
                     <Route path="/live" element={<LiveTV />} />
                     <Route path="/pair" element={<Pair />} />
                     <Route path="/schedule" element={<Schedule />} />
+                    <Route path="/watch/:id/:episode" element={<Watch />} />
                   </Routes>
                   </div>
                 </>

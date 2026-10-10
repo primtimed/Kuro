@@ -260,10 +260,12 @@ export function Detail() {
   const upNext = episodes.slice(startIndex, startIndex + UP_NEXT_COUNT);
   const unwatchedSimilar = similar.filter((m) => !watchedIds.has(m.id));
   const byYear = (a: { media: Media }, b: { media: Media }) => (a.media.year ?? 9999) - (b.media.year ?? 9999);
+  // AniList can list the same entry twice (or the title itself), which would duplicate timeline nodes.
+  const seasonRelations = relations.filter((r, i) => r.media.id !== media.id && relations.findIndex((o) => o.media.id === r.media.id) === i);
   const seasonChain = [
-    ...relations.filter((r) => r.relationType === "PREQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
+    ...seasonRelations.filter((r) => r.relationType === "PREQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
     { relationType: "CURRENT", media, isCurrent: true },
-    ...relations.filter((r) => r.relationType === "SEQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
+    ...seasonRelations.filter((r) => r.relationType === "SEQUEL").sort(byYear).map((r) => ({ ...r, isCurrent: false })),
   ];
 
   return (
