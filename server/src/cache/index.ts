@@ -109,6 +109,7 @@ export async function cached<T>(
 export const TTL = {
   TRENDING: 60 * 60 * 1000,        // 1 hour
   SEASONAL: 60 * 60 * 1000,        // 1 hour
+  SCHEDULE: 30 * 60 * 1000,        // 30 minutes
   SEARCH: 10 * 60 * 1000,          // 10 minutes
   DETAIL: 60 * 60 * 1000,           // 1 hour
   EPISODES: 60 * 60 * 1000,        // 1 hour

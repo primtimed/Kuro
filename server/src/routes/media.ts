@@ -3,6 +3,7 @@ import { cache, cached, TTL } from "../cache/index.js";
 import { getProvider, getMediaDetail, anilist, jikan, animepahe } from "../providers/index.js";
 import { findSlug, getAnimeId, getEpisodeList, getLatestEpisode, listByAudio, type CatalogListing } from "../providers/anikototv.js";
 import { searchNyaa } from "../lib/torrent.js";
+import type { ScheduleEntry } from "../providers/anilist.js";
 import type { Episode, Media } from "../types/media.js";
 
 // Returns true if the torrent title contains enough words from at least one anime title.
@@ -46,6 +47,7 @@ const MAX_BATCH_IDS = 200;
 const al = anilist as typeof anilist & {
   getTrending(): Promise<Media[]>;
   getSeasonal(): Promise<Media[]>;
+  getSchedule(fromSec: number, toSec: number): Promise<ScheduleEntry[]>;
   getRecommendations(id: string): Promise<Media[]>;
   getByGenre(genre: string): Promise<Media[]>;
   getCardsByIds(externalIds: string[]): Promise<Media[]>;
@@ -84,6 +86,21 @@ router.get("/seasonal", async (req, res) => {
     return res.json(await cached(`seasonal:${type}`, TTL.SEASONAL, () => al.getSeasonal()));
   } catch (err) {
     return res.status(500).json({ error: String(err) });
+  }
+});
+
+const DAY_SEC = 24 * 60 * 60;
+
+// One shared window wide enough that every timezone's "yesterday → +5 days" fits in a single cache entry.
+router.get("/schedule", async (_req, res) => {
+  try {
+    return res.json(await cached("schedule", TTL.SCHEDULE, () => {
+      const now = Math.floor(Date.now() / 1000);
+      return al.getSchedule(now - 2 * DAY_SEC, now + 7 * DAY_SEC);
+    }, (list) => list.length > 0));
+  } catch (err) {
+    console.error("[media] loading airing schedule failed:", err);
+    return res.status(502).json({ error: { code: "SCHEDULE_UNAVAILABLE", message: "Airing schedule is unavailable right now" } });
   }
 });
 

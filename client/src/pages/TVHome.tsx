@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Hero } from "../components/Hero";
 import { Row } from "../components/Row";
-import { TrendingList } from "../components/TrendingList";
+import { TrendingPanel } from "../components/TrendingPanel";
 import { api } from "../lib/api";
 import type { Media, HistoryEntry } from "../lib/types";
 
@@ -107,17 +107,12 @@ export function TVHome() {
   }, []);
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <Hero items={trending.slice(0, 5)} loading={trendingLoading} />
+    <div className="home-dash" style={{ minHeight: "100vh", background: "var(--bg)" }}>
+        <main style={{ minWidth: 0 }}>
+          <div className="home-dash-hero">
+            <Hero items={trending.slice(0, 5)} loading={trendingLoading} />
+          </div>
 
-      <div style={{
-        height: 1,
-        background: "linear-gradient(to right, transparent, var(--line-2), transparent)",
-        margin: "0 32px",
-      }} />
-
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
-        <main style={{ flex: 1, minWidth: 0, paddingTop: 44, paddingBottom: 88 }}>
           {history.length > 0 && (
             <Row title="Continue Watching" items={history} seeAllTo="/library?tab=history" />
           )}
@@ -132,8 +127,12 @@ export function TVHome() {
           )}
         </main>
 
-        <TrendingList items={trending} loading={trendingLoading} />
-      </div>
+        <aside className="home-dash-aside" aria-label="Trending">
+          <TrendingPanel tabs={[
+            { label: "Popular", items: trending, loading: trendingLoading },
+            { label: "On air", items: onAir, loading: onAirLoading },
+          ]} />
+        </aside>
     </div>
   );
 }

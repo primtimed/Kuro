@@ -49,13 +49,12 @@ export function Row({ title, titleColor, items, loading, ranked, seeAllTo }: Row
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: `0 ${pad}px 16px`,
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-          <span style={{
-            width: 3, height: 17, borderRadius: 2,
-            background: titleColor ?? "var(--accent)", flexShrink: 0,
-          }} />
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em" }}>{title}</h2>
-        </div>
+        <h2 style={{
+          margin: 0, paddingLeft: 12, borderLeft: `4px solid ${titleColor ?? "var(--accent)"}`,
+          fontSize: isMobile ? 18 : 22, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.1,
+        }}>
+          {title}
+        </h2>
         {!loading && items.length > 5 && seeAllTo && (
           <Link
             to={seeAllTo}

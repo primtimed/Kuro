@@ -1,6 +1,8 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+import type { Media } from "./types";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -16,4 +18,12 @@ export function formatRuntime(seconds: number): string {
 export function progressPercent(progress: number, duration: number): number {
   if (!duration) return 0;
   return Math.min(100, Math.round((progress / duration) * 100));
+}
+
+/** Short format label ("TV", "MOVIE", "TV SHORT"). Null when the source didn't say, rather than guessing. */
+export function toFormatLabel(media: Pick<Media, "mediaFormat" | "type">): string | null {
+  if (media.mediaFormat) return media.mediaFormat.replace("_", " ").toUpperCase();
+  if (media.type === "movie") return "MOVIE";
+  if (media.type === "series") return "TV";
+  return null;
 }

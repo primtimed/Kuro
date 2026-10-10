@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Search, Home, Compass, BookMarked, ChevronDown, Tags, Settings, Menu, X, Tv, Lock, LogOut } from "lucide-react";
+import { Search, Home, Compass, BookMarked, ChevronDown, Tags, Settings, Menu, X, Tv, Lock, LogOut, CalendarDays } from "lucide-react";
 import { useAccount } from "../context/AccountContext";
 import { useMediaMode } from "../context/MediaModeContext";
 import { api } from "../lib/api";
@@ -39,7 +39,6 @@ export function Navbar() {
   const { mode, setMode } = useMediaMode();
   const GENRES = mode === "tv" ? TV_GENRES : ANIME_GENRES;
   const [query, setQuery] = useState("");
-  const [switchOpen, setSwitchOpen] = useState(false);
   const [genreOpen, setGenreOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalResults, setModalResults] = useState<Media[]>([]);
@@ -50,7 +49,6 @@ export function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { account, profiles, requestProfile, signOut } = useAccount();
-  const switchRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const genreRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -74,24 +72,6 @@ export function Navbar() {
     document.body.style.overflow = mobileOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [mobileOpen]);
-
-  useEffect(() => {
-    if (!switchOpen) return;
-    function close(e: MouseEvent) {
-      if (switchRef.current && !switchRef.current.contains(e.target as Node)) {
-        setSwitchOpen(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setSwitchOpen(false);
-    }
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [switchOpen]);
 
   useEffect(() => {
     if (!genreOpen) return;
@@ -303,6 +283,7 @@ export function Navbar() {
                 {[
                   { label: "Home", icon: <Home size={16} />, to: "/" },
                   { label: "Browse", icon: <Compass size={16} />, to: "/browse" },
+                  ...(mode === "anime" ? [{ label: "Schedule", icon: <CalendarDays size={16} />, to: "/schedule" }] : []),
                   ...(mode === "tv" ? [{ label: "Live TV", icon: <Tv size={16} />, to: "/live" }] : []),
                   { label: "Library", icon: <BookMarked size={16} />, to: "/library" },
                   { label: "Settings", icon: <Settings size={16} />, to: "/settings" },
@@ -392,155 +373,44 @@ export function Navbar() {
     );
   }
 
+  const quickLinks = mode === "tv"
+    ? [{ label: "For you", to: "/" }, { label: "Popular", to: "/browse/trending" }, { label: "On air", to: "/browse/onair" }]
+    : [{ label: "For you", to: "/" }, { label: "Trending", to: "/browse/trending" }, { label: "This season", to: "/browse/seasonal" }, { label: "Recommended", to: "/browse/recommended" }];
+
   return (
     <header style={{
       position: "sticky", top: 0, zIndex: 50,
-      background: "rgba(10,10,10,0.85)",
+      background: "var(--glass-strong)",
       backdropFilter: "blur(14px)",
       WebkitBackdropFilter: "blur(14px)",
-      borderBottom: "1px solid var(--line)",
     }}>
-      <div style={{
-        maxWidth: 1600, margin: "0 auto", padding: "12px 32px",
-        display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: 28,
-      }}>
-        {/* Left: logo + mode toggle + nav */}
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <button onClick={() => navigate("/")} style={{ display: "flex", alignItems: "center" }}>
-            <KuroLogo />
-          </button>
-
-          {/* Anime / TV Series mode toggle */}
-          <div
-            role="group"
-            aria-label="Content type"
-            style={{
-              display: "flex", alignItems: "center",
-              background: "var(--surf)", border: "1px solid var(--line-2)",
-              borderRadius: 8, padding: 3, gap: 2,
-            }}
-          >
-            {(["anime", "tv"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => {
-                  if (mode === m) return;
-                  setMode(m);
-                  clearSearch();
-                  navigate("/");
-                }}
-                aria-pressed={mode === m}
-                style={{
-                  padding: "5px 13px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                  transition: "background 150ms, color 150ms, box-shadow 150ms",
-                  background: mode === m ? "var(--accent)" : "transparent",
-                  color: mode === m ? "#fff" : "var(--dim)",
-                  boxShadow: mode === m ? "0 1px 4px rgba(229,9,20,0.4)" : "none",
-                  border: mode === m ? "1px solid var(--accent)" : "1px solid transparent",
-                  letterSpacing: 0.2,
-                }}
-              >
-                {m === "anime" ? "Anime" : "TV Series"}
-              </button>
-            ))}
-          </div>
-
-          <nav style={{ display: "flex", gap: 4 }}>
-            <NavBtn icon={<Home size={13} />} label="Home" active={path === "/"} onClick={() => navigate("/")} />
-            <NavBtn icon={<Compass size={13} />} label="Browse" active={path === "/browse" || path.startsWith("/browse/")} onClick={() => navigate("/browse")} />
-            {mode === "tv" && (
-              <NavBtn icon={<Tv size={13} />} label="Live TV" active={path === "/live"} onClick={() => navigate("/live")} />
-            )}
-            <NavBtn icon={<BookMarked size={13} />} label="Library" active={path === "/library"} onClick={() => navigate("/library")} />
-
-            <div ref={genreRef} style={{ position: "relative" }}>
-              <button
-                onClick={() => setGenreOpen((o) => !o)}
-                aria-expanded={genreOpen}
-                aria-haspopup="true"
-                style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "8px 12px", borderRadius: 6, fontSize: 13, fontWeight: 500,
-                  color: path.startsWith("/genre/") ? "#fff" : "var(--muted)",
-                  background: path.startsWith("/genre/") ? "var(--surf-2)" : "transparent",
-                  border: path.startsWith("/genre/") ? "1px solid var(--line-2)" : "1px solid transparent",
-                }}
-              >
-                <Tags size={13} /> Genres <ChevronDown size={11} color="var(--dim)" style={{ marginLeft: -2, transform: genreOpen ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
-              </button>
-              {genreOpen && (
-                <div style={{
-                  position: "absolute", top: "calc(100% + 6px)", left: 0,
-                  background: "var(--surf-2)", border: "1px solid var(--line-2)",
-                  borderRadius: 10, padding: 12,
-                  boxShadow: "0 16px 48px rgba(0,0,0,0.7)",
-                  zIndex: 200, width: 280,
-                }}>
-                  <div style={{
-                    display: "grid", gridTemplateColumns: "1fr 1fr",
-                    gap: 6,
-                  }}>
-                    {GENRES.map((g) => (
-                      <button
-                        key={g}
-                        onClick={() => { setGenreOpen(false); navigate(`/genre/${encodeURIComponent(g)}`); }}
-                        style={{
-                          padding: "7px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                          textAlign: "left",
-                          background: path === `/genre/${encodeURIComponent(g)}` ? "var(--accent)" : "var(--surf-3)",
-                          color: path === `/genre/${encodeURIComponent(g)}` ? "#fff" : "var(--muted)",
-                          border: "1px solid var(--line)",
-                          transition: "background 120ms, color 120ms",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (path !== `/genre/${encodeURIComponent(g)}`) {
-                            e.currentTarget.style.background = "var(--surf-4, var(--line))";
-                            e.currentTarget.style.color = "var(--text)";
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (path !== `/genre/${encodeURIComponent(g)}`) {
-                            e.currentTarget.style.background = "var(--surf-3)";
-                            e.currentTarget.style.color = "var(--muted)";
-                          }
-                        }}
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </nav>
-        </div>
-
-        {/* Center: search */}
-        <div ref={searchRef} style={{ position: "relative", maxWidth: 520, justifySelf: "center", width: "100%" }}>
+      <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 28 }}>
+        {/* Search */}
+        <div ref={searchRef} style={{ position: "relative", width: 380, flexShrink: 0 }}>
           <form onSubmit={handleSearch} style={{
             display: "flex", alignItems: "center", gap: 10,
-            background: "var(--surf)", border: "1px solid var(--line)", borderRadius: 8,
-            padding: "8px 12px",
+            background: "var(--glass-light)", border: "1px solid var(--line-2)", borderRadius: 8,
+            padding: "0 14px", minHeight: 44,
           }}>
-            <Search size={14} color="var(--dim)" />
+            <Search size={16} color="var(--dim)" />
             <input
               value={query}
               onChange={(e) => handleQueryChange(e.target.value)}
-              placeholder={mode === "tv" ? 'Search TV series — try "The Boys", "Breaking Bad"…' : 'Search titles — try "Frieren", "MAPPA"…'}
+              placeholder={mode === "tv" ? "Search TV series…" : "Search anime…"}
               aria-label="Search titles"
               style={{
-                flex: 1, background: "transparent", border: 0, outline: 0,
-                color: "var(--text)", fontFamily: "inherit", fontSize: 13,
+                flex: 1, minWidth: 0, background: "transparent", border: 0, outline: 0,
+                color: "var(--text)", fontFamily: "inherit", fontSize: 14,
               }}
             />
           </form>
 
           {modalOpen && (
             <div role="listbox" aria-label="Search results" style={{
-              position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0,
+              position: "absolute", top: "calc(100% + 6px)", left: 0, width: 460,
               background: "var(--surf-2)", border: "1px solid var(--line-2)",
               borderRadius: 10, overflow: "hidden",
-              boxShadow: "0 16px 48px rgba(0,0,0,0.7)",
+              boxShadow: "0 16px 48px var(--glass-strong)",
               zIndex: 200, maxHeight: 420, overflowY: "auto",
             }}>
               {modalLoading && (
@@ -568,19 +438,16 @@ export function Navbar() {
                 <button
                   key={m.id}
                   role="option"
+                  className="list-row"
                   onClick={() => handleResultClick(m.id)}
                   style={{
                     display: "flex", alignItems: "center", gap: 12, width: "100%",
-                    padding: "10px 14px", borderBottom: "1px solid var(--line)",
-                    background: "transparent", textAlign: "left",
-                    transition: "background 150ms",
+                    padding: "10px 14px", borderBottom: "1px solid var(--line)", textAlign: "left",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surf-3)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   <div style={{ width: 36, height: 50, borderRadius: 4, overflow: "hidden", flexShrink: 0, border: "1px solid var(--line)" }}>
                     {m.poster
-                      ? <img src={m.poster} alt={m.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      ? <img src={m.poster} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                       : <AnimeCover title={m.title} w={36} h={50} />
                     }
                   </div>
@@ -598,15 +465,12 @@ export function Navbar() {
 
               {!modalLoading && modalResults.length > 8 && (
                 <button
+                  className="list-row"
                   onClick={() => { setModalOpen(false); navigate(`/search?q=${encodeURIComponent(query.trim())}`); }}
                   style={{
                     display: "block", width: "100%", padding: "11px 14px",
-                    textAlign: "center", fontSize: 12, color: "var(--accent)",
-                    fontWeight: 600, background: "transparent",
-                    transition: "background 150ms",
+                    textAlign: "center", fontSize: 12, color: "var(--accent)", fontWeight: 600,
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surf-3)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
                   See all results for "{query}"
                 </button>
@@ -615,123 +479,89 @@ export function Navbar() {
           )}
         </div>
 
-        {/* Right: settings + account switcher */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button
-          onClick={() => navigate("/settings")}
-          aria-label="Settings"
+        {/* Quick links */}
+        <nav aria-label="Sections" style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          {quickLinks.map((l) => (
+            <button key={l.to} className="topnav-link" aria-current={path === l.to ? "page" : undefined} onClick={() => navigate(l.to)}>
+              {l.label}
+            </button>
+          ))}
+
+          <div ref={genreRef} style={{ position: "relative" }}>
+            <button
+              className="topnav-link"
+              onClick={() => setGenreOpen((o) => !o)}
+              aria-expanded={genreOpen}
+              aria-haspopup="true"
+              aria-current={path.startsWith("/genre/") ? "page" : undefined}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              <Tags size={14} /> Genres <ChevronDown size={12} color="var(--dim)" style={{ transform: genreOpen ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
+            </button>
+            {genreOpen && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 6px)", left: 0,
+                background: "var(--surf-2)", border: "1px solid var(--line-2)",
+                borderRadius: 10, padding: 12,
+                boxShadow: "0 16px 48px var(--glass-strong)",
+                zIndex: 200, width: 280,
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
+              }}>
+                {GENRES.map((g) => {
+                  const isActive = path === `/genre/${encodeURIComponent(g)}`;
+                  return (
+                    <button
+                      key={g}
+                      className={isActive ? undefined : "list-row"}
+                      onClick={() => { setGenreOpen(false); navigate(`/genre/${encodeURIComponent(g)}`); }}
+                      style={{
+                        minHeight: 36, padding: "0 10px", borderRadius: 6, fontSize: 12, fontWeight: 500, textAlign: "left",
+                        background: isActive ? "var(--accent)" : "var(--surf-3)",
+                        color: isActive ? "var(--text)" : "var(--muted)",
+                        border: "1px solid var(--line)",
+                      }}
+                    >
+                      {g}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </nav>
+
+        {/* Anime / TV Series mode toggle */}
+        <div
+          role="group"
+          aria-label="Content type"
           style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 34, height: 34, borderRadius: 7,
-            border: "1px solid var(--line-2)", background: path === "/settings" ? "var(--surf-2)" : "var(--surf)",
-            color: "var(--muted)",
+            marginLeft: "auto", display: "flex", alignItems: "center",
+            background: "var(--glass-light)", border: "1px solid var(--line-2)",
+            borderRadius: 8, padding: 3, gap: 2,
           }}
         >
-          <Settings size={14} />
-        </button>
-        <div ref={switchRef} style={{ position: "relative" }}>
-          <button
-            onClick={() => setSwitchOpen((o) => !o)}
-            style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "4px 8px 4px 4px", borderRadius: 7,
-              border: "1px solid var(--line-2)", background: "var(--surf)",
-            }}
-            aria-label="Switch account"
-            aria-expanded={switchOpen}
-            aria-haspopup="true"
-          >
-            <div style={{
-              width: 26, height: 26, borderRadius: 5,
-              background: account
-                ? `linear-gradient(135deg, ${account.color}, ${account.color}88)`
-                : "linear-gradient(135deg, #e50914, #7c1d1d)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 10, fontWeight: 800,
-            }}>
-              {account?.initial ?? "?"}
-            </div>
-            <span style={{ fontSize: 12, fontWeight: 500, color: "var(--text)" }}>
-              {account?.name ?? ""}
-            </span>
-            <ChevronDown size={11} color="var(--dim)" />
-          </button>
-
-          {switchOpen && (
-            <div style={{
-              position: "absolute", top: "calc(100% + 6px)", right: 0,
-              background: "var(--surf-2)", border: "1px solid var(--line-2)",
-              borderRadius: 8, overflow: "hidden", minWidth: 160,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.6)", zIndex: 100,
-            }}>
-              <button
-                onClick={() => { setSwitchOpen(false); navigate("/profiles"); }}
-                className="mono"
-                style={{
-                  width: "100%", padding: "10px 12px", fontSize: 10, letterSpacing: 1, textAlign: "left",
-                  background: "transparent", color: "var(--dim)", borderBottom: "1px solid var(--line)",
-                }}
-              >
-                WHO'S WATCHING?
-              </button>
-              {profiles.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => { setSwitchOpen(false); requestProfile(a); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    width: "100%", padding: "10px 12px", fontSize: 13,
-                    background: a.id === account?.id ? "var(--surf-3)" : "transparent",
-                    color: a.id === account?.id ? "var(--text)" : "var(--muted)",
-                    borderBottom: "1px solid var(--line)",
-                  }}
-                >
-                  <div style={{
-                    width: 22, height: 22, borderRadius: 4, flexShrink: 0,
-                    background: `linear-gradient(135deg, ${a.color}, ${a.color}88)`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 9, fontWeight: 800, color: "var(--text)",
-                  }}>
-                    {a.initial}
-                  </div>
-                  {a.name}
-                  {a.needsPin && <Lock size={11} aria-label="PIN protected" style={{ color: "var(--dim)" }} />}
-                  {a.id === account?.id && (
-                    <span style={{ marginLeft: "auto", fontSize: 10, color: a.color }}>✓</span>
-                  )}
-                </button>
-              ))}
-              <button
-                onClick={() => void signOut()}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  width: "100%", padding: "10px 12px", fontSize: 13,
-                  background: "transparent", color: "var(--muted)",
-                }}
-              >
-                <LogOut size={14} aria-hidden="true" /> Sign out
-              </button>
-            </div>
-          )}
-        </div>
+          {(["anime", "tv"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => {
+                if (mode === m) return;
+                setMode(m);
+                clearSearch();
+                navigate("/");
+              }}
+              aria-pressed={mode === m}
+              style={{
+                minHeight: 36, padding: "0 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, letterSpacing: 0.4,
+                transition: "background 150ms, color 150ms",
+                background: mode === m ? "var(--accent)" : "transparent",
+                color: mode === m ? "var(--text)" : "var(--dim)",
+              }}
+            >
+              {m === "anime" ? "ANIME" : "TV"}
+            </button>
+          ))}
         </div>
       </div>
     </header>
-  );
-}
-
-function NavBtn({ icon, label, active, onClick }: {
-  icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void;
-}) {
-  return (
-    <button onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 8,
-      padding: "8px 12px", borderRadius: 6, fontSize: 13, fontWeight: 500,
-      color: active ? "#fff" : "var(--muted)",
-      background: active ? "var(--surf-2)" : "transparent",
-      border: active ? "1px solid var(--line-2)" : "1px solid transparent",
-    }}>
-      {icon} {label}
-    </button>
   );
 }

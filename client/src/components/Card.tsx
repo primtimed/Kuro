@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import type { Media } from "../lib/types";
 import { AnimeCover } from "../lib/procedural";
 import { useLibrary } from "../context/LibraryContext";
+import { toFormatLabel } from "../lib/utils";
 
 interface CardProps {
   media: Media;
@@ -17,6 +18,7 @@ export function Card({ media, rank, width = 178 }: CardProps) {
   const isWatched = watchedIds.has(media.id);
   const userRating = ratingMap.get(media.id) ?? null;
   const h = Math.round(width * (4 / 3) * 1.06);
+  const format = toFormatLabel(media);
 
   return (
     <Link
@@ -35,7 +37,7 @@ export function Card({ media, rank, width = 178 }: CardProps) {
         position: "relative", width, height: h,
         borderRadius: 6, overflow: "hidden",
         border: hover ? "1px solid var(--accent)" : "1px solid var(--line)",
-        boxShadow: hover ? "0 12px 30px rgba(229,9,20,0.25)" : "0 4px 12px rgba(0,0,0,0.4)",
+        boxShadow: hover ? "0 12px 30px var(--accent-glow)" : "0 4px 12px var(--glass)",
         transition: "border-color 200ms, box-shadow 200ms",
       }}>
         {(media.poster || media.banner) ? (
@@ -44,13 +46,23 @@ export function Card({ media, rank, width = 178 }: CardProps) {
           <AnimeCover title={media.title} w={width} h={h} />
         )}
 
-        {/* Type badge */}
-        <div className="mono" style={{
-          position: "absolute", top: 8, left: 8,
-          fontSize: 9, padding: "2px 6px", borderRadius: 3,
-          background: "rgba(0,0,0,0.7)", border: "1px solid rgba(255,255,255,0.15)",
-          color: "#fff", fontWeight: 600, letterSpacing: 0.5,
-        }}>{media.type.toUpperCase()}</div>
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, var(--glass-strong), transparent 38%)", pointerEvents: "none" }} />
+
+        {/* Community rating + format — top left */}
+        <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 4 }}>
+          {media.rating && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: "3px 6px", borderRadius: 4,
+              background: "var(--glass-strong)", color: "var(--rating)",
+            }}>★ {media.rating.toFixed(1)}</span>
+          )}
+          {format && (
+            <span className="mono" style={{
+              fontSize: 10, fontWeight: 700, padding: "3px 6px", borderRadius: 4, letterSpacing: 0.4,
+              background: "var(--glass-strong)", color: "var(--text)",
+            }}>{format}</span>
+          )}
+        </div>
 
         {/* Watched badge — top right */}
         {isWatched && (
@@ -68,33 +80,32 @@ export function Card({ media, rank, width = 178 }: CardProps) {
         {/* User star rating — bottom left */}
         {userRating !== null && (
           <div style={{
-            position: "absolute", bottom: 8, left: 8,
+            position: "absolute", bottom: 8, left: rank != null ? 56 : 8,
             fontSize: 9, padding: "2px 6px", borderRadius: 3,
-            background: "rgba(0,0,0,0.75)", border: "1px solid rgba(251,191,36,0.5)",
-            color: "#fbbf24", fontWeight: 700,
+            background: "var(--glass-strong)", border: "1px solid var(--rating)",
+            color: "var(--rating)", fontWeight: 700,
           }}>
             {"★".repeat(userRating)}
           </div>
         )}
 
-        {/* AniList community rating */}
-        {media.rating && (
-          <div style={{
+        {/* Episode count — bottom right */}
+        {media.totalEpisodes && (
+          <div className="mono" style={{
             position: "absolute", bottom: 8, right: 8,
-            display: "flex", alignItems: "center", gap: 3,
-            fontSize: 10, padding: "2px 6px", borderRadius: 3,
-            background: "rgba(0,0,0,0.7)", color: "var(--rating)", fontWeight: 700,
+            fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 800,
+            background: "var(--chip-light)", color: "var(--bg)",
           }}>
-            ★ {media.rating.toFixed(1)}
+            {media.totalEpisodes} EP
           </div>
         )}
 
         {/* Ranked ghost number */}
         {rank != null && (
           <div style={{
-            position: "absolute", top: -4, left: -8,
+            position: "absolute", bottom: -10, left: -4,
             fontSize: 88, fontWeight: 900, color: "transparent",
-            WebkitTextStroke: "2px rgba(229,9,20,0.9)",
+            WebkitTextStroke: "2px var(--accent)",
             fontFamily: "Geist, sans-serif", lineHeight: 0.9,
             letterSpacing: "-0.05em", pointerEvents: "none", userSelect: "none",
           }}>{rank}</div>
@@ -102,10 +113,13 @@ export function Card({ media, rank, width = 178 }: CardProps) {
       </div>
 
       {/* Caption */}
-      <div style={{ padding: "8px 2px 0" }}>
-        <div className="clip-1" style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em" }}>{media.title}</div>
-        <div className="mono" style={{ fontSize: 10, color: "var(--dim)", marginTop: 5, letterSpacing: 0.5 }}>
-          {media.year ?? "—"}{media.totalEpisodes ? ` · ${media.totalEpisodes}EP` : ""}
+      <div style={{ padding: "9px 2px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }} />
+          <span className="clip-1" style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em" }}>{media.title}</span>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 4 }}>
+          {[format, media.year, media.genres[0]].filter(Boolean).join(" · ")}
         </div>
       </div>
     </Link>

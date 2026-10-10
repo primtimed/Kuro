@@ -14,6 +14,7 @@ import type {
   SignedInDevice,
   FamilyProfile,
   InviteInfo,
+  ScheduleEntry,
 } from "./types";
 import { ACCOUNT_STORAGE_KEY, GUEST_ACCOUNT } from "./accounts";
 
@@ -90,6 +91,7 @@ export const api = {
 
   trending: (type = "anime") => get<Media[]>(`/media/trending?type=${type}`),
   seasonal: (type = "anime") => get<Media[]>(`/media/seasonal?type=${type}`),
+  schedule: () => get<ScheduleEntry[]>("/media/schedule"),
   search: (q: string, page: number, format?: string, genre?: string) =>
     get<{ items: Media[]; hasNextPage: boolean }>(
       `/media/search?${new URLSearchParams({ q, page: String(page), ...(format && { format }), ...(genre && { genre }) })}`

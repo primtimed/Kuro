@@ -1,6 +1,13 @@
 import type { Media, Episode, StreamResult, Provider, CastMember } from "../types/media.js";
 
 const ENDPOINT = "https://graphql.anilist.co";
+const SCHEDULE_MAX_PAGES = 8;
+
+export interface ScheduleEntry {
+  airingAt: number; // unix seconds
+  episode: number;
+  media: Media;
+}
 
 class AniListError extends Error {
   constructor(public code: "RATE_LIMITED" | "UNREACHABLE" | "HTTP_ERROR" | "GRAPHQL_ERROR", message: string) {
@@ -405,6 +412,37 @@ const anilist: Provider = {
     return (data.Page.media ?? []).map(mapMedia);
   },
 
+  async getSchedule(fromSec: number, toSec: number): Promise<ScheduleEntry[]> {
+    const entries: ScheduleEntry[] = [];
+    // Nine days of airings is ~250–350 rows; cap pages so a bad window can't drain the rate limit.
+    for (let page = 1; page <= SCHEDULE_MAX_PAGES; page++) {
+      const data = await gql<{
+        Page: {
+          pageInfo: { hasNextPage: boolean };
+          airingSchedules: { airingAt: number; episode: number; media: { isAdult: boolean } & Record<string, unknown> }[];
+        };
+      }>(
+        `query ($from: Int, $to: Int, $page: Int) {
+          Page(page: $page, perPage: 50) {
+            pageInfo { hasNextPage }
+            airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+              airingAt
+              episode
+              media { isAdult ${CARD_FIELDS} }
+            }
+          }
+        }`,
+        { from: fromSec, to: toSec, page }
+      );
+      for (const s of data.Page.airingSchedules ?? []) {
+        if (s.media.isAdult) continue;
+        entries.push({ airingAt: s.airingAt, episode: s.episode, media: mapMedia(s.media) });
+      }
+      if (!data.Page.pageInfo?.hasNextPage) break;
+    }
+    return entries;
+  },
+
   async getSeasonal(): Promise<Media[]> {
     const now = new Date();
     const month = now.getMonth() + 1;
@@ -526,6 +564,7 @@ const anilist: Provider = {
 } as Provider & {
   getTrending(): Promise<Media[]>;
   getSeasonal(): Promise<Media[]>;
+  getSchedule(fromSec: number, toSec: number): Promise<ScheduleEntry[]>;
   getRecommendations(id: string): Promise<Media[]>;
   getByGenre(genre: string): Promise<Media[]>;
   getCardsByIds(externalIds: string[]): Promise<Media[]>;

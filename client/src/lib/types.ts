@@ -47,6 +47,12 @@ export interface Media {
   mediaFormat?: string; // AniList format: TV, TV_SHORT, MOVIE, OVA, ONA, SPECIAL, MUSIC
 }
 
+export interface ScheduleEntry {
+  airingAt: number; // unix seconds
+  episode: number;
+  media: Media;
+}
+
 export interface EpisodeAvail {
   hasSub: boolean;
   hasDub: boolean;

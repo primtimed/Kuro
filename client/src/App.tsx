@@ -5,6 +5,7 @@ import { LibraryProvider } from "./context/LibraryContext";
 import { ServicesProvider } from "./context/ServicesContext";
 import { MediaModeProvider, useMediaMode } from "./context/MediaModeContext";
 import { Navbar } from "./components/Navbar";
+import { SideRail } from "./components/SideRail";
 import { Home } from "./pages/Home";
 import { TVHome } from "./pages/TVHome";
 import { ProfileSelect } from "./pages/ProfileSelect";
@@ -22,6 +23,7 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const LiveTV = lazy(() => import("./pages/LiveTV").then((m) => ({ default: m.LiveTV })));
 const LiveWatch = lazy(() => import("./pages/LiveWatch").then((m) => ({ default: m.LiveWatch })));
 const Invite = lazy(() => import("./pages/Invite").then((m) => ({ default: m.Invite })));
+const Schedule = lazy(() => import("./pages/Schedule").then((m) => ({ default: m.Schedule })));
 const Pair = lazy(() => import("./pages/Pair").then((m) => ({ default: m.Pair })));
 
 function PageFallback() {
@@ -86,6 +88,8 @@ function AppRoutes() {
               path="/*"
               element={
                 <>
+                  <SideRail />
+                  <div className="kuro-shell">
                   <Navbar />
                   <Routes>
                     <Route path="/" element={<HomeRoute />} />
@@ -99,7 +103,9 @@ function AppRoutes() {
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/live" element={<LiveTV />} />
                     <Route path="/pair" element={<Pair />} />
+                    <Route path="/schedule" element={<Schedule />} />
                   </Routes>
+                  </div>
                 </>
               }
             />
