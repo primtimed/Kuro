@@ -17,6 +17,8 @@ interface BrowseHeroProps {
   audio?: Audio;
   onAudioChange?: (a: Audio) => void;
   placeholder: string;
+  eyebrow?: string;
+  title?: React.ReactNode;
 }
 
 const COLLAGE_SIZE = 27;
@@ -24,6 +26,8 @@ const COLLAGE_SIZE = 27;
 export function BrowseHero({
   query, onQueryChange, onSubmit, inputRef, collage,
   formats, format, onFormatChange, audio, onAudioChange, placeholder,
+  eyebrow = "BROWSE THE CATALOG",
+  title = <>Find your next<br /><span style={{ color: "var(--accent)" }}>obsession.</span></>,
 }: BrowseHeroProps) {
   const isMobile = useIsMobile();
 
@@ -50,13 +54,13 @@ export function BrowseHero({
 
       <div style={{ position: "relative" }}>
         <p className="mono" style={{ margin: "0 0 12px", fontSize: 11, letterSpacing: 2, fontWeight: 800, color: "var(--accent-hi)" }}>
-          BROWSE THE CATALOG
+          {eyebrow}
         </p>
         <h1 style={{
           margin: 0, fontSize: isMobile ? 32 : 52, fontWeight: 900, lineHeight: 0.95,
           letterSpacing: isMobile ? "-0.03em" : "-0.04em", textTransform: "uppercase",
         }}>
-          Find your next<br /><span style={{ color: "var(--accent)" }}>obsession.</span>
+          {title}
         </h1>
 
         <form

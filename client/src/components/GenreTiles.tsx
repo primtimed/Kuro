@@ -1,3 +1,23 @@
+import type { Media } from "../lib/types";
+
+const TILE_ART_COUNT = 3;
+
+/**
+ * Picks poster art for a genre tile from titles already on the page, so the tiles cost no
+ * extra requests. Genres with too few matches are topped up with other posters, offset per
+ * genre so neighbouring tiles don't repeat the same art.
+ */
+export function pickGenreArt(pool: Media[], genres: string[], genre: string): string[] {
+  const withPoster = pool.filter((m) => m.poster);
+  const matches = withPoster.filter((m) => m.genres.includes(genre)).slice(0, TILE_ART_COUNT);
+  const offset = genres.indexOf(genre) * TILE_ART_COUNT;
+  const fill = withPoster.filter((m) => !matches.includes(m));
+  while (matches.length < TILE_ART_COUNT && fill.length > 0) {
+    matches.push(fill[(offset + matches.length) % fill.length]);
+  }
+  return matches.map((m) => m.poster);
+}
+
 interface GenreTilesProps {
   genres: string[];
   activeGenre: string;
