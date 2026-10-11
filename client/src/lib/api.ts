@@ -89,6 +89,8 @@ export const api = {
     unlink: (id: string) => post<{ ok: true }>(`/family/profiles/${encodeURIComponent(id)}/unlink`),
   },
 
+  // Reachable while signed out: cover art for the sign-in page background.
+  signInArt: () => get<{ posters: string[] }>("/public/sign-in-art"),
   trending: (type = "anime") => get<Media[]>(`/media/trending?type=${type}`),
   seasonal: (type = "anime") => get<Media[]>(`/media/seasonal?type=${type}`),
   schedule: () => get<ScheduleEntry[]>("/media/schedule"),

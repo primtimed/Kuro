@@ -40,9 +40,14 @@ interface GoogleSignInButtonProps {
   clientId: string;
   onCredential: (credential: string) => void;
   onLoadError: (message: string) => void;
+  /** White button as wide as its container (Google allows 200–400px) instead of the compact black one. */
+  isWide?: boolean;
 }
 
-export function GoogleSignInButton({ clientId, onCredential, onLoadError }: GoogleSignInButtonProps) {
+const GOOGLE_MIN_WIDTH = 200;
+const GOOGLE_MAX_WIDTH = 400;
+
+export function GoogleSignInButton({ clientId, onCredential, onLoadError, isWide }: GoogleSignInButtonProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Google keeps the first callback it is given; route it through a ref so it always calls the latest one.
   const onCredentialRef = useRef(onCredential);
@@ -58,17 +63,18 @@ export function GoogleSignInButton({ clientId, onCredential, onLoadError }: Goog
           ux_mode: "popup",
           callback: (response) => onCredentialRef.current(response.credential),
         });
+        const wideWidth = Math.round(Math.min(GOOGLE_MAX_WIDTH, Math.max(GOOGLE_MIN_WIDTH, containerRef.current.offsetWidth)));
         google.accounts.id.renderButton(containerRef.current, {
-          theme: "filled_black",
+          theme: isWide ? "outline" : "filled_black",
           size: "large",
           shape: "pill",
           text: "signin_with",
-          width: 280,
+          width: isWide ? wideWidth : 280,
         });
       })
       .catch((err: Error) => { if (!isCancelled) onLoadError(err.message); });
     return () => { isCancelled = true; };
-  }, [clientId, onLoadError]);
+  }, [clientId, onLoadError, isWide]);
 
   return <div ref={containerRef} style={{ minHeight: 44, display: "flex", justifyContent: "center" }} />;
 }

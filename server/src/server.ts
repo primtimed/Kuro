@@ -12,6 +12,7 @@ import servicesRouter from "./routes/services.js";
 import liveRouter from "./routes/live.js";
 import authRouter from "./routes/auth.js";
 import familyRouter from "./routes/family.js";
+import publicRouter from "./routes/public.js";
 import { rejectCrossSiteWrites, requireAdmin, requireAuth } from "./lib/auth.js";
 import { ensureAdminSetupLink } from "./lib/invites.js";
 const app = express();
@@ -32,6 +33,7 @@ app.get("/api/health", (_req, res) => {
 
 // Everything after the sign-in routes requires a household session
 app.use("/api/auth", authRouter);
+app.use("/api/public", publicRouter);
 app.use("/api", requireAuth);
 app.use("/api/family", requireAdmin, familyRouter);
 

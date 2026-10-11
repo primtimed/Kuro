@@ -881,3 +881,58 @@ a { color: inherit; text-decoration: none; }
 @media (min-width: 1400px) {
   .zap-sources .settings-nav-sep { display: block; }
 }
+
+/* ── Sign-in / invite split layout ─────────────────────────────────── */
+.auth-split { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); background: var(--bg); }
+.auth-art { position: relative; overflow: hidden; height: 240px; background: var(--player-bg); }
+.auth-wall {
+  position: absolute;
+  inset: -120px -80px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  transform: rotate(-8deg);
+  animation: auth-drift 90s linear infinite alternate;
+}
+.auth-wall-tile { aspect-ratio: 2 / 3; border-radius: 10px; overflow: hidden; background: var(--surf-2); }
+.auth-wall-tile img, .auth-wall-tile svg { width: 100%; height: 100%; object-fit: cover; display: block; }
+.auth-art-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 30%, var(--bg)), linear-gradient(90deg, var(--glass), transparent);
+}
+.auth-caption { display: none; }
+.auth-headline {
+  margin: 12px 0 0;
+  font-size: 52px;
+  font-weight: 900;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+.auth-pane { display: grid; place-items: center; padding: 8px 16px 48px; }
+.auth-card { width: 100%; max-width: 400px; }
+.auth-title {
+  margin: 24px 0 8px;
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.auth-sub { margin: 0 0 26px; font-size: 14px; line-height: 1.55; color: var(--muted); }
+
+@keyframes auth-drift {
+  from { transform: rotate(-8deg) translateY(0); }
+  to { transform: rotate(-8deg) translateY(-240px); }
+}
+
+@media (min-width: 900px) {
+  .auth-split { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+  .auth-art { height: auto; min-height: 100vh; }
+  .auth-art-fade {
+    background: linear-gradient(90deg, transparent, var(--bg) 96%), linear-gradient(to top, var(--bg) 0%, transparent 45%);
+  }
+  .auth-caption { display: block; position: absolute; left: 56px; right: 56px; bottom: 56px; z-index: 1; }
+  .auth-pane { padding: 40px; }
+}
