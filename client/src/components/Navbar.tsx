@@ -386,7 +386,7 @@ export function Navbar() {
     }}>
       <div style={{ padding: "14px 32px", display: "flex", alignItems: "center", gap: 28 }}>
         {/* Search */}
-        <div ref={searchRef} style={{ position: "relative", width: 380, flexShrink: 0 }}>
+        <div ref={searchRef} style={{ position: "relative", width: 380, minWidth: 200, flexShrink: 1 }}>
           <form onSubmit={handleSearch} style={{
             display: "flex", alignItems: "center", gap: 10,
             background: "var(--glass-light)", border: "1px solid var(--line-2)", borderRadius: 8,
@@ -480,7 +480,7 @@ export function Navbar() {
         </div>
 
         {/* Quick links */}
-        <nav aria-label="Sections" style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        <nav aria-label="Sections" className="topnav-links" style={{ alignItems: "center", gap: 20 }}>
           {quickLinks.map((l) => (
             <button key={l.to} className="topnav-link" aria-current={path === l.to ? "page" : undefined} onClick={() => navigate(l.to)}>
               {l.label}

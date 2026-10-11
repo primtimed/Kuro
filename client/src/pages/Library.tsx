@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { BookMarked, History, Trash2, Star, Eye, Heart } from "lucide-react";
+import { BookMarked, History, Star, Eye, Heart, LayoutGrid, Search, X } from "lucide-react";
 import type { FavoriteEntry, HistoryEntry, LikeEntry, Media } from "../lib/types";
 import { api } from "../lib/api";
-import { progressPercent } from "../lib/utils";
+import { progressPercent, toFormatLabel } from "../lib/utils";
 import { useAccount } from "../context/AccountContext";
 import { useMediaMode } from "../context/MediaModeContext";
 import { AnimeCover } from "../lib/procedural";
@@ -14,7 +14,7 @@ function resolveTag(contentTag: string | undefined, mediaId: string): string {
   return contentTag ?? (mediaId.startsWith("tvmaze:") ? "tv" : "anime");
 }
 
-type Tab = "favorites" | "history" | "liked" | "watched" | "fav-series";
+type Tab = "overview" | "favorites" | "history" | "liked" | "watched" | "fav-series";
 type AudioFilter = "all" | "sub" | "dub";
 
 type WatchedGroup = {
@@ -65,7 +65,7 @@ export function Library() {
   const { mode } = useMediaMode();
   const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
-  const initialTab = (searchParams.get("tab") as Tab | null) ?? "favorites";
+  const initialTab = (searchParams.get("tab") as Tab | null) ?? "overview";
   const [tab, setTab] = useState<Tab>(initialTab);
   const [favorites, setFavorites] = useState<FavoriteEntry[]>([]);
   const [history, setHistory] = useState<HistoryGroup[]>([]);
@@ -80,6 +80,8 @@ export function Library() {
   const [audioFilter, setAudioFilter] = useState<AudioFilter>("all");
   const [dubIds, setDubIds] = useState<Set<string> | null>(null);
   const [dubChecking, setDubChecking] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
 
   useEffect(() => {
     setHistoryLoading(true);
@@ -267,195 +269,290 @@ export function Library() {
     favSeries.map((f) => ({ ...f, content_tag: resolveTag((f as { content_tag?: string }).content_tag, f.media_id) }))
   );
 
-  const TABS: [Tab, string, typeof BookMarked][] = [
-    ["favorites", "To Watch", BookMarked],
-    ["liked", "Liked", Star],
-    ["history", "Continue Watching", History],
-    ["watched", "Watched", Eye],
-    ["fav-series", "Favourites", Heart],
+  // Library search applies to every list, including the Overview shelves.
+  const query = libraryQuery.trim().toLowerCase();
+  const matchesQuery = (title: string | undefined) => !query || (title ?? "").toLowerCase().includes(query);
+
+  const toWatchItems = sortItems(
+    filteredFavorites.filter((f) => matchesQuery(f.title)),
+    sortKey, (f) => f.title, (f) => f.added_at,
+  );
+  const likedAll = filteredLikes.filter((l) => matchesQuery(l.title));
+  const likedItems = sortItems(
+    starFilter === null ? likedAll : likedAll.filter((l) => l.rating === starFilter),
+    sortKey, (l) => l.title, (l) => l.liked_at, (l) => l.rating,
+  );
+  const continueItems = sortItems(
+    filteredHistory.filter((g) => matchesQuery(g.media?.title)),
+    sortKey, (g) => g.media?.title ?? "", (g) => g.entry.last_watched,
+  );
+  const watchedItems = sortItems(
+    filteredWatched.filter((g) => matchesQuery(g.media?.title)),
+    sortKey, (g) => g.media?.title ?? "", (g) => g.last_watched,
+  );
+  // Favourites keep the order they were added in; it doubles as the Top 10 ranking.
+  const favItems = filteredFavSeries.filter((f) => matchesQuery(f.title));
+
+  const avgRating = filteredLikes.length > 0
+    ? filteredLikes.reduce((sum, l) => sum + l.rating, 0) / filteredLikes.length
+    : null;
+  const starCounts = [5, 4, 3, 2, 1].map((n) => ({ stars: n, count: likedAll.filter((l) => l.rating === n).length }));
+  const heroPosters = [...filteredHistory.map((g) => g.media?.poster), ...filteredFavorites.map((f) => posterMap.get(f.media_id) ?? f.poster)]
+    .filter((p): p is string => !!p)
+    .slice(0, HERO_POSTER_COUNT);
+
+  const TABS: { id: Tab; label: string; icon: React.ReactNode; count?: string }[] = [
+    { id: "overview", label: "Overview", icon: <LayoutGrid size={15} /> },
+    { id: "favorites", label: "To Watch", icon: <BookMarked size={15} />, count: String(filteredFavorites.length) },
+    { id: "history", label: "Continue", icon: <History size={15} />, count: String(filteredHistory.length) },
+    { id: "liked", label: "Liked", icon: <Star size={15} />, count: String(filteredLikes.length) },
+    { id: "watched", label: "Watched", icon: <Eye size={15} />, count: String(filteredWatched.length) },
+    { id: "fav-series", label: "Favourites", icon: <Heart size={15} />, count: `${filteredFavSeries.length}/${MAX_FAV_SERIES}` },
   ];
 
   const otherTag = mode === "tv" ? "anime" : "tv";
   const hiddenCount = favorites.filter((i) => resolveTag(i.content_tag, i.media_id) === otherTag).length;
+  const isFiltered = audioFilter !== "all" || !!query;
+  const pad = isMobile ? 16 : 32;
+
+  const starChips = (
+    <div role="group" aria-label="Filter by your rating" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <button className="star-chip" aria-pressed={starFilter === null} onClick={() => setStarFilter(null)}>All</button>
+      {starCounts.filter((s) => s.count > 0).map((s) => (
+        <button key={s.stars} className="star-chip" aria-pressed={starFilter === s.stars} onClick={() => setStarFilter(s.stars)} aria-label={`${s.stars} stars, ${s.count} titles`}>
+          {"★".repeat(s.stars)} · {s.count}
+        </button>
+      ))}
+    </div>
+  );
+
+  const removeFavSeries = async (mediaId: string) => {
+    await api.library.removeFavoriteSeries(mediaId).catch((err: unknown) => console.error("[library] removing favourite failed:", err));
+    setFavSeries((prev) => prev.filter((x) => x.media_id !== mediaId));
+  };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", padding: isMobile ? "70px 16px 64px" : "80px 32px 64px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>{account?.name}'s Library</h1>
-        {hiddenCount > 0 && (
-          <span style={{ fontSize: 12, color: "var(--dim)" }}>
-            {hiddenCount} item{hiddenCount !== 1 ? "s" : ""} hidden — switch to {mode === "tv" ? "Anime" : "TV Series"} to see them
-          </span>
-        )}
-      </div>
-
-      {/* Tabs + audio filter */}
-      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 32, alignItems: "flex-end", overflowX: "auto", scrollbarWidth: "none" }}>
-        {TABS.map(([t, label, Icon]) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              display: "flex", alignItems: "center", gap: 7,
-              padding: "10px 14px", fontSize: 13, fontWeight: 500,
-              color: tab === t ? "var(--text)" : "var(--muted)",
-              borderBottom: `2px solid ${tab === t ? "var(--accent)" : "transparent"}`,
-              marginBottom: -1,
-            }}
-          >
-            <Icon size={14} />
-            {label}
-          </button>
-        ))}
-
-        {mode === "anime" && (
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, paddingBottom: 10 }}>
-          {dubChecking && (
-            <span className="mono" style={{ color: "var(--dim)", fontSize: 10, marginRight: 4, letterSpacing: 1 }}>checking…</span>
-          )}
-          {(["ALL", "SUB", "DUB"] as const).map((m) => {
-            const val = m.toLowerCase() as AudioFilter;
-            const active = audioFilter === val;
-            return (
-              <button
-                key={m}
-                onClick={() => handleAudioFilter(val)}
-                disabled={dubChecking && val !== "all"}
-                className="mono"
-                style={{
-                  padding: "4px 10px", borderRadius: 4, fontSize: 10, fontWeight: 700, letterSpacing: 2,
-                  background: active ? "var(--accent)" : "transparent",
-                  color: active ? "#fff" : "var(--muted)",
-                  opacity: dubChecking && val !== "all" ? 0.4 : 1,
-                  cursor: dubChecking && val !== "all" ? "not-allowed" : "pointer",
-                }}
-              >
-                {m}
-              </button>
-            );
-          })}
-        </div>
-        )}
-      </div>
-
-      {tab === "favorites" ? (
-        filteredFavorites.length === 0 ? (
-          <EmptyState hasItems={favorites.length > 0} filtered={audioFilter !== "all"} baseMessage="Nothing in your to watch list yet." />
-        ) : (
-          <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-            {filteredFavorites.map((f) => (
-              <FavoriteCard key={f.media_id} entry={f} batchPoster={posterMap.get(f.media_id)} onRemove={() => removeFavorite(f.media_id)} />
-            ))}
+    <div style={{ minHeight: "100vh", background: "var(--bg)", padding: `8px ${pad}px 88px` }}>
+      {/* Profile banner */}
+      <section className="lib-hero" aria-label="Library overview">
+        {heroPosters.length > 0 && (
+          <div aria-hidden="true" style={{ position: "absolute", inset: 0, display: "flex", opacity: 0.22 }}>
+            {heroPosters.map((p, i) => <img key={i} src={p} alt="" style={{ height: "100%", flex: 1, minWidth: 0, objectFit: "cover" }} />)}
           </div>
-        )
-      ) : tab === "liked" ? (
-        <>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 24 }}>
-            <div style={{ position: "relative" }}>
-              <Star
-                size={14}
-                style={{
-                  pointerEvents: "none", position: "absolute",
-                  left: 10, top: "50%", transform: "translateY(-50%)",
-                  color: starFilter !== null ? "var(--rating)" : "var(--dim)",
-                  fill: starFilter !== null ? "var(--rating)" : "none",
-                }}
-              />
-              <select
-                value={starFilter ?? ""}
-                onChange={(e) => setStarFilter(e.target.value === "" ? null : Number(e.target.value))}
-                aria-label="Filter by star rating"
-                style={{
-                  appearance: "none" as const,
-                  paddingLeft: 28, paddingRight: 28, paddingTop: 6, paddingBottom: 6,
-                  borderRadius: 6, background: "var(--surf)", fontSize: 13, fontWeight: 500,
-                  border: `1px solid ${starFilter !== null ? "var(--rating)" : "var(--line-2)"}`,
-                  color: starFilter !== null ? "var(--rating)" : "var(--muted)",
-                  cursor: "pointer", outline: "none",
-                }}
-              >
-                <option value="">All ratings</option>
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <option key={n} value={n}>{"★".repeat(n)}{"☆".repeat(5 - n)}</option>
-                ))}
-              </select>
-              <svg style={{ pointerEvents: "none", position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)" }} width={12} height={12} viewBox="0 0 12 12" fill="none">
-                <path d="M2 4l4 4 4-4" stroke="var(--dim)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
+        )}
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, var(--bg) 30%, var(--glass-strong) 60%, var(--glass))" }} />
+        <div style={{ position: "relative", display: "flex", alignItems: "center", gap: isMobile ? 16 : 24, minWidth: 0 }}>
+          <div style={{
+            width: isMobile ? 64 : 88, height: isMobile ? 64 : 88, borderRadius: 18, flexShrink: 0,
+            background: account ? `linear-gradient(135deg, ${account.color}, ${account.color}88)` : "var(--accent)",
+            display: "grid", placeItems: "center", fontSize: isMobile ? 28 : 40, fontWeight: 900,
+            boxShadow: "0 12px 30px var(--accent-glow)",
+          }}>
+            {account?.initial ?? "?"}
           </div>
-          {(() => {
-            const byRating = starFilter === null ? filteredLikes : filteredLikes.filter((l) => l.rating === starFilter);
-            return byRating.length === 0 ? (
-              <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
-                {likes.length === 0
-                  ? "Nothing rated yet."
-                  : audioFilter !== "all" && filteredLikes.length === 0
-                  ? "No matching anime for this filter."
-                  : "No items with that rating."}
+          <div style={{ minWidth: 0 }}>
+            <p className="mono" style={{ margin: 0, fontSize: 11, letterSpacing: 2, fontWeight: 800, color: "var(--accent-hi)" }}>YOUR LIBRARY</p>
+            <h1 style={{ margin: "4px 0 0", fontSize: isMobile ? 26 : 40, fontWeight: 900, letterSpacing: "-0.035em", lineHeight: 1, textTransform: "uppercase" }}>
+              {account?.name}'s <span style={{ color: "var(--accent)" }}>collection.</span>
+            </h1>
+            {hiddenCount > 0 && (
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)" }}>
+                {hiddenCount} item{hiddenCount !== 1 ? "s" : ""} hidden — switch to {mode === "tv" ? "Anime" : "TV Series"} to see them
               </p>
-            ) : (
-              <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-                {byRating.map((l) => (
-                  <LikedCard key={l.media_id} entry={l} batchPoster={posterMap.get(l.media_id)} />
-                ))}
-              </div>
-            );
-          })()}
-        </>
-      ) : tab === "history" ? (
-        historyLoading ? (
-          <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-            {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} style={{ width: CARD_W, height: CARD_H, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
-            ))}
+            )}
           </div>
-        ) : filteredHistory.length === 0 ? (
-          <EmptyState hasItems={history.length > 0} filtered={audioFilter !== "all"} baseMessage="No watch history yet." />
-        ) : (
-          <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-            {filteredHistory.map((g) => (
-              <ContinueWatchingCard key={g.media_id} group={g} onRemove={() => removeHistoryEntry(g.media_id)} />
-            ))}
-          </div>
-        )
-      ) : tab === "watched" ? (
-        watchedLoading ? (
-          <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-            {Array.from({ length: 7 }).map((_, i) => (
-              <div key={i} style={{ width: CARD_W, height: CARD_H, background: "var(--surf-2)", borderRadius: 6, animation: "pulse 1.5s ease-in-out infinite" }} />
-            ))}
-          </div>
-        ) : filteredWatched.length === 0 ? (
-          <EmptyState hasItems={false} filtered={false} baseMessage="Nothing here yet — watch 80% of an episode list and it'll appear." />
-        ) : (
-          <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-            {filteredWatched.map((g) => (
-              <WatchedCard key={g.media_id} group={g} />
-            ))}
-          </div>
-        )
-      ) : (
-        filteredFavSeries.length === 0 ? (
-          <EmptyState hasItems={false} filtered={false} baseMessage="No favourites yet — press the heart button on any title." />
-        ) : (
-          <>
-            <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>{filteredFavSeries.length} / 10 favourites</p>
-            <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, 178px)", gap: 12 }}>
-              {filteredFavSeries.map((f) => (
-                <FavSeriesCard
-                  key={f.media_id}
-                  entry={f}
-                  batchPoster={posterMap.get(f.media_id)}
-                  onRemove={async () => {
-                    await api.library.removeFavoriteSeries(f.media_id).catch(() => {});
-                    setFavSeries((prev) => prev.filter((x) => x.media_id !== f.media_id));
-                  }}
-                />
+        </div>
+        <dl className="lib-stats">
+          <Stat label="WATCHING" value={String(filteredHistory.length)} />
+          <Stat label="TO WATCH" value={String(filteredFavorites.length)} />
+          <Stat label="COMPLETED" value={String(filteredWatched.length)} />
+          <Stat label="AVG RATING" value={avgRating !== null ? avgRating.toFixed(1) : "—"} suffix={avgRating !== null ? "/5" : undefined} isRating />
+        </dl>
+      </section>
+
+      {/* Tabs + library search + audio */}
+      <div className="lib-tabrow">
+        <div role="tablist" aria-label="Library sections" style={{ display: "flex", gap: 10 }}>
+          {TABS.map((t, i) => (
+            <React.Fragment key={t.id}>
+              {i === 1 && <span aria-hidden="true" style={{ width: 2, alignSelf: "stretch", background: "var(--line)", margin: "0 2px" }} />}
+              <button
+                role="tab"
+                aria-selected={tab === t.id}
+                className="tab-slant"
+                onClick={() => setTab(t.id)}
+                style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 14px", whiteSpace: "nowrap", fontSize: 12 }}
+              >
+                {t.icon} {t.label}
+                {t.count !== undefined && <span className="mono" style={{ fontSize: 11, opacity: 0.7 }}>{t.count}</span>}
+              </button>
+            </React.Fragment>
+          ))}
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, width: isMobile ? "100%" : undefined }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 44, flex: isMobile ? 1 : undefined, minWidth: 0, width: isMobile ? undefined : 180, padding: "0 12px", borderRadius: 8, background: "var(--surf)", border: "1px solid var(--line)" }}>
+            <Search size={14} color="var(--dim)" aria-hidden="true" />
+            <input
+              value={libraryQuery}
+              onChange={(e) => setLibraryQuery(e.target.value)}
+              placeholder="Search your library…"
+              aria-label="Search your library"
+              style={{ flex: 1, minWidth: 0, background: "transparent", border: 0, outline: 0, color: "var(--text)", fontFamily: "inherit", fontSize: 13 }}
+            />
+          </label>
+          {mode === "anime" && (
+            <div role="group" aria-label="Audio" className="seg-group">
+              {(["all", "sub", "dub"] as const).map((val) => (
+                <button
+                  key={val}
+                  className="seg-btn"
+                  aria-pressed={audioFilter === val}
+                  onClick={() => handleAudioFilter(val)}
+                  disabled={dubChecking && val !== "all"}
+                  style={{ letterSpacing: 0.6, opacity: dubChecking && val !== "all" ? 0.4 : 1 }}
+                >
+                  {val.toUpperCase()}
+                </button>
               ))}
             </div>
-          </>
-        )
+          )}
+          {dubChecking && <span className="mono" style={{ color: "var(--dim)", fontSize: 10, letterSpacing: 1 }}>CHECKING…</span>}
+        </div>
+      </div>
+
+      {tab === "overview" ? (
+        <>
+          {continueItems.length > 0 && (
+            <Shelf title="Continue Watching" count={String(continueItems.length)} onSeeAll={() => setTab("history")}>
+              {continueItems.map((g) => (
+                <LibraryContinueCard key={g.media_id} group={g} banner={bannerMap.get(g.media_id)} onRemove={() => removeHistoryEntry(g.media_id)} />
+              ))}
+            </Shelf>
+          )}
+          {favItems.length > 0 && (
+            <Shelf title="Your Top 10" count={`FAVOURITES · ${filteredFavSeries.length}/${MAX_FAV_SERIES}`} onSeeAll={() => setTab("fav-series")}>
+              {favItems.map((f, i) => (
+                <TopTenCard key={f.media_id} rank={i + 1} mediaId={f.media_id} title={f.title} poster={posterMap.get(f.media_id) || f.poster} />
+              ))}
+            </Shelf>
+          )}
+          {toWatchItems.length > 0 && (
+            <Shelf title="To Watch" count={String(toWatchItems.length)} onSeeAll={() => setTab("favorites")}>
+              {toWatchItems.map((f) => (
+                <LibraryPosterCard
+                  key={f.media_id}
+                  mediaId={f.media_id}
+                  title={f.title}
+                  poster={posterMap.get(f.media_id) || f.poster}
+                  onRemove={() => removeFavorite(f.media_id)}
+                  removeLabel="Remove from to watch list"
+                />
+              ))}
+            </Shelf>
+          )}
+          {likedAll.length > 0 && (
+            <Shelf title="Liked" count={String(likedAll.length)} onSeeAll={() => setTab("liked")} extra={starChips}>
+              {likedItems.map((l) => (
+                <LibraryPosterCard key={l.media_id} mediaId={l.media_id} title={l.title} poster={posterMap.get(l.media_id) || l.poster} badge={<StarsBadge rating={l.rating} />} />
+              ))}
+            </Shelf>
+          )}
+          {watchedItems.length > 0 && (
+            <Shelf title="Watched" count={String(watchedItems.length)} onSeeAll={() => setTab("watched")}>
+              {watchedItems.map((g) => <WatchedPoster key={g.media_id} group={g} />)}
+            </Shelf>
+          )}
+          {!historyLoading && !watchedLoading && continueItems.length + favItems.length + toWatchItems.length + likedAll.length + watchedItems.length === 0 && (
+            <EmptyState hasItems={favorites.length + likes.length + history.length > 0} filtered={isFiltered} baseMessage="Your library is empty — add shows to To Watch or start watching to fill it." />
+          )}
+        </>
+      ) : (
+        <section aria-labelledby="lib-section-title">
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
+            <h2 id="lib-section-title" className="section-title" style={{ margin: 0 }}>{TABS.find((t) => t.id === tab)?.label}</h2>
+            {tab === "liked" && starChips}
+            {tab !== "fav-series" && (
+              <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 12px", borderRadius: 8, background: "var(--surf)", border: "1px solid var(--line)", fontSize: 12.5, color: "var(--muted)" }}>
+                Sort:
+                <select
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  style={{ background: "transparent", border: 0, outline: 0, color: "var(--text)", fontWeight: 700, fontFamily: "inherit", fontSize: 12.5 }}
+                >
+                  <option value="recent">Most recent</option>
+                  <option value="title">Title A–Z</option>
+                  {tab === "liked" && <option value="rating">Your rating</option>}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {tab === "favorites" ? (
+            toWatchItems.length === 0 ? (
+              <EmptyState hasItems={filteredFavorites.length > 0 || favorites.length > 0} filtered={isFiltered} baseMessage="Nothing in your to watch list yet." />
+            ) : (
+              <div className="card-grid lib-grid">
+                {toWatchItems.map((f) => (
+                  <LibraryPosterCard key={f.media_id} mediaId={f.media_id} title={f.title} poster={posterMap.get(f.media_id) || f.poster} onRemove={() => removeFavorite(f.media_id)} removeLabel="Remove from to watch list" />
+                ))}
+              </div>
+            )
+          ) : tab === "liked" ? (
+            likedItems.length === 0 ? (
+              <EmptyState hasItems={likes.length > 0} filtered={isFiltered || starFilter !== null} baseMessage="Nothing rated yet." />
+            ) : (
+              <div className="card-grid lib-grid">
+                {likedItems.map((l) => (
+                  <LibraryPosterCard key={l.media_id} mediaId={l.media_id} title={l.title} poster={posterMap.get(l.media_id) || l.poster} badge={<StarsBadge rating={l.rating} />} />
+                ))}
+              </div>
+            )
+          ) : tab === "history" ? (
+            historyLoading ? (
+              <div className="lib-wide-grid">
+                {Array.from({ length: 6 }).map((_, i) => <div key={i} style={{ aspectRatio: "16 / 10", borderRadius: 10, background: "var(--surf-2)", animation: "pulse 1.5s ease-in-out infinite" }} />)}
+              </div>
+            ) : continueItems.length === 0 ? (
+              <EmptyState hasItems={history.length > 0} filtered={isFiltered} baseMessage="No watch history yet." />
+            ) : (
+              <div className="lib-wide-grid">
+                {continueItems.map((g) => (
+                  <LibraryContinueCard key={g.media_id} group={g} banner={bannerMap.get(g.media_id)} onRemove={() => removeHistoryEntry(g.media_id)} isFluid />
+                ))}
+              </div>
+            )
+          ) : tab === "watched" ? (
+            watchedLoading ? (
+              <div className="card-grid lib-grid">
+                {Array.from({ length: 7 }).map((_, i) => <div key={i} style={{ width: CARD_W, height: CARD_H, background: "var(--surf-2)", borderRadius: 8, animation: "pulse 1.5s ease-in-out infinite" }} />)}
+              </div>
+            ) : watchedItems.length === 0 ? (
+              <EmptyState hasItems={filteredWatched.length > 0} filtered={!!query} baseMessage="Nothing here yet — watch 80% of an episode list and it'll appear." />
+            ) : (
+              <div className="card-grid lib-grid">
+                {watchedItems.map((g) => <WatchedPoster key={g.media_id} group={g} />)}
+              </div>
+            )
+          ) : (
+            favItems.length === 0 ? (
+              <EmptyState hasItems={filteredFavSeries.length > 0} filtered={!!query} baseMessage="No favourites yet — press the heart button on any title." />
+            ) : (
+              <div className="card-grid lib-grid">
+                {favItems.map((f, i) => (
+                  <LibraryPosterCard
+                    key={f.media_id}
+                    mediaId={f.media_id}
+                    title={f.title}
+                    poster={posterMap.get(f.media_id) || f.poster}
+                    badge={<span className="lib-badge" style={{ color: "var(--fav-text)" }}><Heart size={10} fill="currentColor" /> #{i + 1}</span>}
+                    onRemove={() => removeFavSeries(f.media_id)}
+                    removeLabel="Remove from favourites"
+                  />
+                ))}
+              </div>
+            )
+          )}
+        </section>
       )}
     </div>
   );
@@ -463,179 +560,161 @@ export function Library() {
 
 const CARD_W = 178;
 const CARD_H = Math.round(CARD_W * (4 / 3) * 1.06);
+const HERO_POSTER_COUNT = 8;
+const MAX_FAV_SERIES = 10;
 
-function FavoriteCard({ entry: f, batchPoster, onRemove }: { entry: FavoriteEntry; batchPoster?: string; onRemove: () => void }) {
-  const [hovering, setHovering] = useState(false);
-  const img = batchPoster || f.poster;
+type SortKey = "recent" | "title" | "rating";
+
+function sortItems<T>(items: T[], key: SortKey, title: (item: T) => string, date: (item: T) => number, rating?: (item: T) => number): T[] {
+  const sorted = [...items];
+  if (key === "title") sorted.sort((a, b) => title(a).localeCompare(title(b)));
+  else if (key === "rating" && rating) sorted.sort((a, b) => rating(b) - rating(a) || date(b) - date(a));
+  else sorted.sort((a, b) => date(b) - date(a));
+  return sorted;
+}
+
+function Stat({ label, value, suffix, isRating }: { label: string; value: string; suffix?: string; isRating?: boolean }) {
   return (
-    <div
-      style={{ position: "relative", width: CARD_W }}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <Link to={`/title/${encodeURIComponent(f.media_id)}`} style={{ display: "block", textDecoration: "none" }}>
-        <div className="lib-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 6, overflow: "hidden", border: "1px solid var(--line)" }}>
-          {img
-            ? <img src={img} alt={f.title} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} loading="lazy" />
-            : <AnimeCover title={f.title} w={CARD_W} h={CARD_H} />
-          }
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: 8, background: "linear-gradient(to top, rgba(0,0,0,0.9), transparent)" }}>
-            <p className="clip-2" style={{ margin: 0, color: "var(--text)", fontSize: 12 }}>{f.title}</p>
-          </div>
-        </div>
-      </Link>
-      <button
-        onClick={onRemove}
-        aria-label="Remove from to watch list"
-        style={{
-          position: "absolute", top: 6, right: 6, padding: 6,
-          background: hovering ? "rgba(239,68,68,0.75)" : "rgba(0,0,0,0.6)",
-          borderRadius: 4, opacity: hovering ? 1 : 0, transition: "opacity 150ms, background 150ms",
-        }}
-      >
-        <Trash2 size={12} color="#fff" />
-      </button>
+    <div className="lib-stat">
+      <dt style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.4, color: "var(--dim)" }}>{label}</dt>
+      <dd style={{ margin: "4px 0 0", fontSize: 24, fontWeight: 900, color: isRating ? "var(--rating)" : "var(--text)" }}>
+        {value}{suffix && <span style={{ fontSize: 12, fontWeight: 600, color: "var(--dim)" }}> {suffix}</span>}
+      </dd>
     </div>
   );
 }
 
-function LikedCard({ entry: l, batchPoster }: { entry: LikeEntry; batchPoster?: string }) {
-  const img = batchPoster || l.poster;
+function Shelf({ title, count, onSeeAll, extra, children }: { title: string; count: string; onSeeAll: () => void; extra?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <Link to={`/title/${encodeURIComponent(l.media_id)}`} style={{ display: "block", textDecoration: "none", width: CARD_W }}>
-      <div className="lib-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 6, overflow: "hidden", border: "1px solid var(--line)" }}>
-        {img
-          ? <img src={img} alt={l.title} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} loading="lazy" />
-          : <AnimeCover title={l.title} w={CARD_W} h={CARD_H} />
-        }
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: 8, background: "linear-gradient(to top, rgba(0,0,0,0.9), transparent)" }}>
-          <p className="clip-2" style={{ margin: "0 0 5px", color: "var(--text)", fontSize: 12 }}>{l.title}</p>
-          <div style={{ display: "flex", gap: 2 }}>
-            {Array.from({ length: l.rating }).map((_, i) => (
-              <Star key={i} size={10} color="var(--rating)" fill="var(--rating)" />
-            ))}
-          </div>
-        </div>
+    <section style={{ marginBottom: 40 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <h2 className="section-title" style={{ margin: 0 }}>{title}</h2>
+        <span className="mono" style={{ fontSize: 11, color: "var(--dim)" }}>{count}</span>
+        {extra}
+        <button onClick={onSeeAll} className="mono" style={{ marginLeft: "auto", minHeight: 36, fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "var(--accent-hi)" }}>
+          SEE ALL →
+        </button>
       </div>
+      <div className="row-scroll" style={{ paddingTop: 4 }}>{children}</div>
+    </section>
+  );
+}
+
+function LibraryPosterCard({ mediaId, title, poster, badge, onRemove, removeLabel }: {
+  mediaId: string; title: string; poster?: string; badge?: React.ReactNode; onRemove?: () => void; removeLabel?: string;
+}) {
+  return (
+    <div className="lib-card" style={{ position: "relative", width: CARD_W, flexShrink: 0 }}>
+      <Link to={`/title/${encodeURIComponent(mediaId)}`} className="kuro-card" style={{ display: "block" }}>
+        <div className="lib-card-img kuro-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 8, overflow: "hidden", border: "1px solid var(--line)" }}>
+          {poster
+            ? <img src={poster} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} />
+            : <AnimeCover title={title} w={CARD_W} h={CARD_H} />}
+          {badge && (
+            <>
+              <span aria-hidden="true" style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, var(--glass-strong), transparent 35%)" }} />
+              <span style={{ position: "absolute", left: 8, bottom: 8 }}>{badge}</span>
+            </>
+          )}
+        </div>
+        <div style={{ padding: "9px 2px 0", display: "flex", alignItems: "center", gap: 7 }}>
+          <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", flexShrink: 0 }} />
+          <span className="clip-1" style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{title}</span>
+        </div>
+      </Link>
+      {onRemove && (
+        <button onClick={onRemove} aria-label={`${removeLabel}: ${title}`} className="lib-remove">
+          <X size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StarsBadge({ rating }: { rating: number }) {
+  return (
+    <span className="lib-badge" aria-label={`Your rating: ${rating} of 5`} style={{ color: "var(--rating)", letterSpacing: 1 }}>
+      {"★".repeat(rating)}
+    </span>
+  );
+}
+
+function WatchedPoster({ group: g }: { group: WatchedGroup }) {
+  const title = g.media?.title ?? g.media_id;
+  const pct = g.media?.totalEpisodes && g.watched_count > 0 ? Math.round((g.watched_count / g.media.totalEpisodes) * 100) : null;
+  return (
+    <LibraryPosterCard
+      mediaId={g.media_id}
+      title={title}
+      poster={g.media?.poster}
+      badge={<span className="lib-badge" style={{ color: "var(--seen-text)" }}><Eye size={10} /> {pct !== null ? `${Math.min(pct, 100)}%` : "WATCHED"}</span>}
+    />
+  );
+}
+
+function TopTenCard({ rank, mediaId, title, poster }: { rank: number; mediaId: string; title: string; poster?: string }) {
+  return (
+    <Link
+      to={`/title/${encodeURIComponent(mediaId)}`}
+      className="kuro-card"
+      aria-label={`#${rank} ${title}`}
+      style={{ display: "flex", alignItems: "flex-end", flexShrink: 0, height: 220, paddingLeft: 6 }}
+    >
+      <span aria-hidden="true" style={{
+        fontSize: 200, fontWeight: 900, lineHeight: 0.74, letterSpacing: "-0.08em", marginRight: -28,
+        color: "var(--bg)", WebkitTextStroke: `3px ${rank === 1 ? "var(--accent)" : "var(--line-2)"}`,
+      }}>
+        {rank}
+      </span>
+      <span className="kuro-card-img" style={{ position: "relative", width: 132, height: 192, borderRadius: 10, overflow: "hidden", boxShadow: "-10px 0 30px var(--glass-strong)" }}>
+        {poster
+          ? <img src={poster} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          : <AnimeCover title={title} w={132} h={192} />}
+      </span>
     </Link>
   );
 }
 
-function FavSeriesCard({ entry: f, batchPoster, onRemove }: { entry: { media_id: string; title: string; poster?: string; added_at: number }; batchPoster?: string; onRemove: () => void }) {
-  const [hovering, setHovering] = useState(false);
-  const img = batchPoster || f.poster;
-  return (
-    <div
-      style={{ position: "relative", width: CARD_W }}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <Link to={`/title/${encodeURIComponent(f.media_id)}`} style={{ display: "block", textDecoration: "none" }}>
-        <div className="lib-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 6, overflow: "hidden", border: "1px solid var(--fav-border)" }}>
-          {img
-            ? <img src={img} alt={f.title} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} loading="lazy" />
-            : <AnimeCover title={f.title} w={CARD_W} h={CARD_H} />
-          }
-          <div style={{ position: "absolute", top: 8, left: 8 }}>
-            <Heart size={12} fill="var(--fav)" color="var(--fav)" />
-          </div>
-        </div>
-        <div style={{ padding: "8px 2px 0" }}>
-          <div className="clip-1" style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text)" }}>{f.title}</div>
-        </div>
-      </Link>
-      <button
-        onClick={onRemove}
-        aria-label="Remove from favourites"
-        style={{
-          position: "absolute", top: 6, right: 6, padding: 6,
-          background: hovering ? "rgba(239,68,68,0.75)" : "rgba(0,0,0,0.6)",
-          borderRadius: 4, opacity: hovering ? 1 : 0, transition: "opacity 150ms, background 150ms",
-        }}
-      >
-        <Trash2 size={12} color="#fff" />
-      </button>
-    </div>
-  );
-}
-
-function ContinueWatchingCard({ group: g, onRemove }: { group: HistoryGroup; onRemove: () => void }) {
-  const [hovering, setHovering] = useState(false);
+function LibraryContinueCard({ group: g, banner, onRemove, isFluid }: { group: HistoryGroup; banner?: string; onRemove: () => void; isFluid?: boolean }) {
   const ep = resumeEpisode(g);
   const pct = progressPercent(g.entry.progress_seconds, g.entry.duration_seconds ?? 0);
+  const isNextEpisode = ep !== g.entry.episode_number;
+  const minutesLeft = !isNextEpisode && g.entry.duration_seconds
+    ? Math.max(Math.round((g.entry.duration_seconds - g.entry.progress_seconds) / 60), 1)
+    : null;
   const title = g.media?.title ?? g.media_id;
+  const art = banner ?? g.media?.banner ?? g.media?.poster;
 
   return (
-    <div
-      style={{ position: "relative", width: CARD_W, flexShrink: 0 }}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <Link to={`/watch/${encodeURIComponent(g.media_id)}/${ep}`} style={{ display: "block", textDecoration: "none" }}>
-        <div className="lib-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 6, overflow: "hidden", border: "1px solid var(--line)" }}>
-          {g.media?.poster ? (
-            <img src={g.media.poster} alt={title} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} loading="lazy" />
-          ) : (
-            <AnimeCover title={title} w={CARD_W} h={CARD_H} />
-          )}
-          <div className="mono" style={{
-            position: "absolute", top: 8, left: 8,
-            fontSize: 9, padding: "2px 6px", borderRadius: 3,
-            background: "rgba(0,0,0,0.82)", border: "1px solid rgba(255,255,255,0.15)",
-            color: "#fff", fontWeight: 700, letterSpacing: 0.5,
-          }}>EP {ep}</div>
-          {pct > 0 && pct < 95 && (
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.18)" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)" }} />
-            </div>
-          )}
-        </div>
-        <div style={{ padding: "8px 2px 0" }}>
-          <div className="clip-1" style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text)" }}>{title}</div>
-        </div>
-      </Link>
-      <button
-        onClick={onRemove}
-        aria-label="Remove from continue watching"
-        style={{
-          position: "absolute", top: 6, right: 6, padding: 6,
-          background: hovering ? "rgba(239,68,68,0.75)" : "rgba(0,0,0,0.6)",
-          borderRadius: 4, opacity: hovering ? 1 : 0, transition: "opacity 150ms, background 150ms",
-        }}
+    <div className="lib-card" style={{ position: "relative", width: isFluid ? "100%" : 320, flexShrink: 0 }}>
+      <Link
+        to={`/watch/${encodeURIComponent(g.media_id)}/${ep}`}
+        className="kuro-card cw-card"
+        aria-label={`Resume ${title}, episode ${ep}`}
+        style={{ display: "block", background: "var(--surf)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}
       >
-        <Trash2 size={12} color="#fff" />
-      </button>
-    </div>
-  );
-}
-
-function WatchedCard({ group: g }: { group: WatchedGroup }) {
-  const title = g.media?.title ?? g.media_id;
-  const pct = g.media?.totalEpisodes ? Math.round((g.watched_count / g.media.totalEpisodes) * 100) : null;
-
-  return (
-    <div style={{ width: CARD_W, flexShrink: 0 }}>
-      <Link to={`/title/${encodeURIComponent(g.media_id)}`} style={{ display: "block", textDecoration: "none" }}>
-        <div className="lib-card-img" style={{ position: "relative", width: CARD_W, height: CARD_H, borderRadius: 6, overflow: "hidden", border: "1px solid var(--seen-border)" }}>
-          {g.media?.poster ? (
-            <img src={g.media.poster} alt={title} style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", display: "block" }} loading="lazy" />
-          ) : (
-            <AnimeCover title={title} w={CARD_W} h={CARD_H} />
-          )}
-          <div className="mono" style={{
-            position: "absolute", top: 8, left: 8,
-            fontSize: 9, padding: "2px 6px", borderRadius: 3,
-            background: "var(--seen-soft)", border: "1px solid var(--seen-border)",
-            color: "var(--seen-text)", fontWeight: 700, letterSpacing: 0.5,
-            display: "flex", alignItems: "center", gap: 3,
-          }}>
-            <Eye size={8} strokeWidth={2.5} /> {pct != null ? `${pct}%` : "WATCHED"}
-          </div>
+        <div className="kuro-card-img" style={{ position: "relative", aspectRatio: "16 / 8" }}>
+          {art
+            ? <img src={art} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            : <AnimeCover title={title} w={320} h={160} />}
+          <span aria-hidden="true" style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, var(--glass-strong), transparent 60%)" }} />
+          <span style={{ position: "absolute", left: 12, bottom: 10, fontSize: 12, fontWeight: 700 }}>
+            EP {ep}
+            {minutesLeft !== null && <span style={{ color: "var(--muted)", fontWeight: 500 }}> · {minutesLeft}m left</span>}
+            {isNextEpisode && <span style={{ color: "var(--muted)", fontWeight: 500 }}> · up next</span>}
+          </span>
         </div>
-        <div style={{ padding: "8px 2px 0" }}>
-          <div className="clip-1" style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text)" }}>{title}</div>
+        <div style={{ height: 3, background: "var(--line-2)" }}>
+          <div style={{ height: "100%", width: `${isNextEpisode ? 0 : pct}%`, background: "var(--accent)" }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "10px 12px" }}>
+          <span className="clip-1" style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{title}</span>
+          {g.media && toFormatLabel(g.media) && <span className="mono" style={{ fontSize: 11, color: "var(--dim)", flexShrink: 0 }}>{toFormatLabel(g.media)}</span>}
         </div>
       </Link>
+      <button onClick={onRemove} aria-label={`Remove from continue watching: ${title}`} className="lib-remove">
+        <X size={13} />
+      </button>
     </div>
   );
 }
@@ -647,7 +726,7 @@ function EmptyState({ hasItems, filtered, baseMessage }: {
 }) {
   return (
     <p style={{ color: "var(--muted)", textAlign: "center", marginTop: 64 }}>
-      {hasItems && filtered ? "No matching anime for this filter." : baseMessage}
+      {hasItems && filtered ? "Nothing matches these filters." : baseMessage}
     </p>
   );
 }

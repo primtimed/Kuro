@@ -570,3 +570,82 @@ a { color: inherit; text-decoration: none; }
   .watch-side { position: relative; }
   .watch-side-inner { position: absolute; inset: 0; max-height: none; }
 }
+
+/* ── Library ───────────────────────────────────────────────────────── */
+.lib-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px 24px;
+  margin-bottom: 22px;
+  padding: 24px 20px;
+  border-radius: var(--radius-hero);
+  border: 1px solid var(--line);
+  background: var(--surf);
+}
+.lib-stats {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+.lib-stat { min-width: 118px; padding: 14px 16px; border-radius: 12px; background: var(--glass-strong); border: 1px solid var(--line); }
+.lib-tabrow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 26px; }
+.lib-tabrow [role="tablist"] { overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, 178px); gap: 22px 14px; justify-content: space-between; }
+.lib-wide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.lib-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: var(--glass-strong);
+}
+.lib-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text);
+  background: var(--glass-strong);
+  opacity: 0;
+  transition: opacity 150ms, background 150ms;
+}
+.lib-card:hover .lib-remove, .lib-remove:focus-visible { opacity: 1; }
+.lib-remove:hover { background: var(--danger-soft); color: var(--danger-text); }
+/* Touch screens have no hover, so the remove button stays visible there. */
+@media (hover: none) { .lib-remove { opacity: 1; } }
+.star-chip {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--surf);
+  border: 1px solid var(--line);
+}
+.star-chip[aria-pressed="true"] { color: var(--rating); background: var(--glass-light); border-color: var(--rating); }
+
+@media (min-width: 900px) {
+  .lib-hero { flex-wrap: nowrap; padding: 28px 32px; }
+  .lib-stats { display: flex; width: auto; margin-left: auto; }
+}
+
+/* Top bar quick links only fit next to the search box on wide screens. */
+.topnav-links { display: none; }
+@media (min-width: 1100px) {
+  .topnav-links { display: flex; }
+}
