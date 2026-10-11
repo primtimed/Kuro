@@ -3,7 +3,7 @@ import { Monitor, Tv } from "lucide-react";
 
 import { useAccount } from "../../context/AccountContext";
 import { api } from "../../lib/api";
-import { SettingsSection, formatLastUsed, settingsButton, settingsInput } from "./SettingsSection";
+import { SettingsSection, formatLastUsed, settingsButton, settingsDangerButton, settingsInput, settingsRow } from "./SettingsSection";
 
 import type { SignedInDevice } from "../../lib/types";
 
@@ -36,6 +36,8 @@ export function DevicesSection() {
   return (
     <SettingsSection
       label="Devices"
+      icon={<Monitor size={17} />}
+      meta={devices && <span className="mono" style={{ fontSize: 11, color: "var(--dim)" }}>{devices.length} SIGNED IN</span>}
       description={isAdmin
         ? "Everyone's signed-in phones, computers and TVs. Signing a device out takes effect immediately."
         : "Your signed-in phones, computers and TVs. Lost a device? Sign it out here."}
@@ -45,13 +47,12 @@ export function DevicesSection() {
       {devices && (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
           {devices.map((device) => (
-            <li key={device.id} style={{
-              display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "10px 12px",
-              borderRadius: 8, background: "var(--surf)", border: "1px solid var(--line)",
-            }}>
-              {device.kind === "tv"
-                ? <Tv size={18} aria-label="TV" style={{ color: "var(--muted)" }} />
-                : <Monitor size={18} aria-label="Browser" style={{ color: "var(--muted)" }} />}
+            <li key={device.id} style={settingsRow}>
+              <span style={{ width: 38, height: 38, borderRadius: 9, display: "grid", placeItems: "center", background: "var(--surf-3)", color: "var(--muted)", flexShrink: 0 }}>
+                {device.kind === "tv"
+                  ? <Tv size={18} aria-label="TV" />
+                  : <Monitor size={18} aria-label="Browser" />}
+              </span>
               <div style={{ flex: 1, minWidth: 160 }}>
                 {renamingId === device.id ? (
                   <form onSubmit={(e) => { e.preventDefault(); saveName(device); }} style={{ display: "flex", gap: 6 }}>
@@ -61,7 +62,7 @@ export function DevicesSection() {
                 ) : (
                   <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
                     {device.name}
-                    {device.isCurrent && <span className="mono" style={{ marginLeft: 8, fontSize: 9, letterSpacing: 1, color: "var(--seen-text)" }}>THIS DEVICE</span>}
+                    {device.isCurrent && <span className="mono" style={{ marginLeft: 8, fontSize: 9.5, fontWeight: 800, letterSpacing: 1, padding: "2px 6px", borderRadius: 4, color: "var(--seen-text)", background: "var(--seen-soft)", border: "1px solid var(--seen-border)" }}>THIS DEVICE</span>}
                   </p>
                 )}
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--dim)" }}>
@@ -71,7 +72,7 @@ export function DevicesSection() {
               {renamingId !== device.id && (
                 <button onClick={() => { setRenamingId(device.id); setNewName(device.name); }} style={settingsButton}>Rename</button>
               )}
-              <button onClick={() => remove(device)} style={settingsButton}>{device.isCurrent ? "Sign out" : "Remove"}</button>
+              <button onClick={() => remove(device)} style={device.isCurrent ? settingsButton : settingsDangerButton}>{device.isCurrent ? "Sign out" : "Remove"}</button>
             </li>
           ))}
         </ul>

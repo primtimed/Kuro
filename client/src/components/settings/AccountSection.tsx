@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Check, LogOut } from "lucide-react";
+import { Check, LogOut, User } from "lucide-react";
 
 import { useAccount } from "../../context/AccountContext";
 import { api } from "../../lib/api";
-import { SettingsSection, settingsButton, settingsInput } from "./SettingsSection";
+import { SettingsSection, settingsButton, settingsInput, settingsPrimaryButton } from "./SettingsSection";
 
 export function AccountSection() {
   const { me, refresh, signOut } = useAccount();
@@ -27,6 +27,7 @@ export function AccountSection() {
   return (
     <SettingsSection
       label="Your account"
+      icon={<User size={17} />}
       description={`Signed in as ${me.owner.name} on ${me.device.name}. Signing in with Google proves it's you, so a forgotten PIN can simply be replaced here.`}
     >
       <form
@@ -48,7 +49,7 @@ export function AccountSection() {
             style={{ ...settingsInput, width: 110, letterSpacing: 4 }}
           />
         </label>
-        <button type="submit" disabled={pin.length !== 4} style={{ ...settingsButton, opacity: pin.length === 4 ? 1 : 0.5 }}>
+        <button type="submit" disabled={pin.length !== 4} style={{ ...settingsPrimaryButton, opacity: pin.length === 4 ? 1 : 0.5 }}>
           {ownProfile.hasPin ? "Change PIN" : "Set PIN"}
         </button>
         {ownProfile.hasPin && (

@@ -336,7 +336,7 @@ a { color: inherit; text-decoration: none; }
 .upnext-thumb:hover, .upnext-thumb[aria-selected="true"] { opacity: 1; }
 .upnext-thumb[aria-selected="true"] { box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px var(--accent-soft); }
 
-.topnav-link { min-height: 40px; padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); transition: color 150ms; }
+.topnav-link { min-height: 40px; padding: 0 4px; font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap; transition: color 150ms; }
 .topnav-link:hover, .topnav-link[aria-current="page"] { color: var(--text); }
 
 @keyframes airing-pulse {
@@ -648,4 +648,47 @@ a { color: inherit; text-decoration: none; }
 .topnav-links { display: none; }
 @media (min-width: 1100px) {
   .topnav-links { display: flex; }
+}
+
+/* ── Settings ──────────────────────────────────────────────────────── */
+.settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.settings-nav {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 6px;
+  border-radius: var(--radius-panel);
+  background: var(--surf);
+  border: 1px solid var(--line);
+}
+.settings-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: background 150ms, color 150ms;
+}
+.settings-nav-btn:hover { color: var(--text); background: var(--surf-2); }
+.settings-nav-btn[aria-current="page"] { color: var(--text); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.settings-nav-icon { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; background: var(--surf-2); flex-shrink: 0; }
+.settings-nav-btn[aria-current="page"] .settings-nav-icon { background: var(--accent); color: var(--text); }
+.settings-nav-sep { display: none; }
+.settings-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+.settings-stack { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+@media (min-width: 900px) {
+  .settings-layout { grid-template-columns: 250px minmax(0, 1fr); gap: 22px; align-items: start; }
+  .settings-nav { flex-direction: column; overflow: visible; position: sticky; top: 88px; padding: 8px; }
+  .settings-nav-sep { display: block; height: 1px; margin: 6px 8px; background: var(--line); }
+}
+/* Two card columns only when each column has room for the device and profile rows. */
+@media (min-width: 1500px) {
+  .settings-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }

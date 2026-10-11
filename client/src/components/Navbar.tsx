@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Search, Home, Compass, BookMarked, ChevronDown, Tags, Settings, Menu, X, Tv, Lock, LogOut, CalendarDays } from "lucide-react";
 import { useAccount } from "../context/AccountContext";
@@ -188,7 +189,8 @@ export function Navbar() {
           </div>
         </div>
 
-        {mobileOpen && (
+        {/* Rendered on <body>: the header's backdrop-filter would otherwise confine this fixed overlay to the header's 58px height. */}
+        {mobileOpen && createPortal(
           <div
             role="dialog"
             aria-modal="true"
@@ -368,7 +370,7 @@ export function Navbar() {
               </div>
             </div>
           </div>
-        )}
+        , document.body)}
       </header>
     );
   }
