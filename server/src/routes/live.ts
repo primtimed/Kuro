@@ -2,6 +2,7 @@ import { Router } from "express";
 import db from "../db/client.js";
 import { activeProfileId, ignoreGuestWrites } from "../lib/auth.js";
 import { getLiveCatalog, type LiveChannel } from "../providers/iptv.js";
+import { getLivePreview } from "../lib/live-preview.js";
 
 const router = Router();
 
@@ -113,6 +114,21 @@ router.get("/channels", async (req, res) => {
     total: matches.length,
     channels: matches.slice(offset, offset + limit).map(({ streams, ...rest }) => ({ ...rest, streamCount: streams.length })),
   });
+});
+
+// GET /api/live/channels/:id/preview → latest still from the stream (JPEG), or 204 while none exists yet
+router.get("/channels/:id/preview", async (req, res) => {
+  let catalog;
+  try { catalog = await getLiveCatalog(); } catch (err) { return catalogUnavailable(res, err); }
+
+  const channel = catalog.channels.find((c) => c.id === req.params.id);
+  if (!channel) return res.status(404).json({ error: { code: "NOT_FOUND", message: "Channel not found" } });
+
+  const image = getLivePreview(channel);
+  if (!image) return res.status(204).end();
+  res.set("Content-Type", "image/jpeg");
+  res.set("Cache-Control", "private, max-age=60");
+  return res.send(image);
 });
 
 // GET /api/live/channels/:id → one channel including all its stream URLs

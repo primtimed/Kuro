@@ -88,7 +88,6 @@ function AppRoutes() {
           <SpatialNav />
           <Suspense fallback={<PageFallback />}>
           <Routes>
-            <Route path="/live/:id" element={<LiveWatch />} />
             <Route path="/invite/:token" element={<Invite />} />
             <Route path="/profiles" element={<ProfileSelect />} />
             <Route
@@ -109,6 +108,7 @@ function AppRoutes() {
                     <Route path="/genre/:genre" element={<Browse />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/live" element={<LiveTV />} />
+                    <Route path="/live/:id" element={<LiveWatch />} />
                     <Route path="/pair" element={<Pair />} />
                     <Route path="/schedule" element={<Schedule />} />
                     <Route path="/watch/:id/:episode" element={<Watch />} />

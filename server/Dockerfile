@@ -19,6 +19,10 @@ ENV NODE_ENV=production \
     UV_THREADPOOL_SIZE=16 \
     PORT=3002 \
     DB_PATH=/data/kuro.db
+# ffmpeg grabs the one-frame stills shown on Live TV channel tiles.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
